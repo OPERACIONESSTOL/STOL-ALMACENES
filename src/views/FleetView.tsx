@@ -32,6 +32,7 @@ import { ExecutiveObservationsSection } from '../components/ExecutiveObservation
 import { getObservationsByModule } from '../data/executiveObservationsRegistry';
 import { FleetReceptionUploader } from '../components/FleetReceptionUploader';
 import { FleetExcelSyncModal } from '../components/FleetExcelSyncModal';
+import { DataFreshnessStatus } from '../components/ManualDataImportPanel';
 import { sortMonthsChronologically, getMonthChronologicalIndex } from '../utils/fleetExcel';
 
 export const FleetView: React.FC = () => {
@@ -402,6 +403,7 @@ export const FleetView: React.FC = () => {
             </div>
 
             <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto justify-start lg:justify-end">
+              <DataFreshnessStatus source="fleet" />
               <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-700 px-3 py-1.5 rounded-xl text-xs text-slate-200 shadow-inner">
                 <span className="text-emerald-400 font-bold">📊 DATA_DASHBOARD_EJECUTIVO.xlsx</span>
                 <span className="text-slate-600">|</span>

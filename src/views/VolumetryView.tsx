@@ -41,6 +41,7 @@ import { ExecutiveObservationsSection } from '../components/ExecutiveObservation
 import { getObservationsByModule } from '../data/executiveObservationsRegistry';
 import { VolumetryCharts } from '../components/VolumetryCharts';
 import { VolumetrySyncPanel } from '../components/VolumetrySyncPanel';
+import { DataFreshnessStatus } from '../components/ManualDataImportPanel';
 import {
   fetchAndParseSkuMasterFromUrl,
   exportMeasurementsToFullExcel,
@@ -77,7 +78,7 @@ export const VolumetryView: React.FC = () => {
 
   // Last Sync Time string
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(() => {
-    return localStorage.getItem(LOCAL_STORAGE_KEY_LAST_SYNC) || 'Hoy a las 08:30 AM (Carpeta Compartida)';
+    return localStorage.getItem(LOCAL_STORAGE_KEY_LAST_SYNC);
   });
 
   // Sync Interval in minutes
@@ -161,38 +162,25 @@ export const VolumetryView: React.FC = () => {
 
     try {
       const result = await fetchAndParseSkuMasterFromUrl(onlineUrl);
-
-      if (result.success && result.measurements.length > 0) {
-        setMeasurements(result.measurements);
-        const timeStr = `Hoy a las ${new Date().toLocaleTimeString('es-PE', {
-          hour: '2-digit',
-          minute: '2-digit',
-        })}`;
-        setLastSyncTime(timeStr);
-        try {
-          localStorage.setItem(LOCAL_STORAGE_KEY_LAST_SYNC, timeStr);
-        } catch (e) {}
-
-        setSyncBannerMessage(
-          `¡Sincronización en línea exitosa! Se actualizaron ${result.totalRowsParsed} SKUs desde la carpeta pública.`
-        );
-      } else {
-        // Friendly fallback for CORS or mock in corporate intranet preview
-        const timeStr = `Hoy a las ${new Date().toLocaleTimeString('es-PE', {
-          hour: '2-digit',
-          minute: '2-digit',
-        })}`;
-        setLastSyncTime(timeStr);
-        try {
-          localStorage.setItem(LOCAL_STORAGE_KEY_LAST_SYNC, timeStr);
-        } catch (e) {}
-
-        setSyncBannerMessage(
-          `Conexión verificada: La carpeta pública está sincronizada (${measurements.length} SKUs activos).`
-        );
+      if (!result.success || result.measurements.length === 0) {
+        throw new Error(result.errorMessage || 'No se pudo leer un maestro SKU válido. Los datos no se actualizaron.');
       }
+
+      setMeasurements(result.measurements);
+      const timeStr = `Hoy a las ${new Date().toLocaleTimeString('es-PE', {
+        hour: '2-digit',
+        minute: '2-digit',
+      })}`;
+      setLastSyncTime(timeStr);
+      try {
+        localStorage.setItem(LOCAL_STORAGE_KEY_LAST_SYNC, timeStr);
+      } catch (e) {}
+
+      setSyncBannerMessage(
+        `Sincronización confirmada: se actualizaron ${result.totalRowsParsed} SKUs desde el archivo vinculado.`
+      );
     } catch (err: any) {
-      setSyncBannerMessage(`Verificación completada: ${measurements.length} SKUs cargados.`);
+      setSyncBannerMessage(`Sin cambios: ${err?.message || 'no se pudo verificar el archivo vinculado.'}`);
     } finally {
       setIsSyncing(false);
       setTimeout(() => setSyncBannerMessage(null), 6000);
@@ -405,6 +393,7 @@ export const VolumetryView: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
+            <DataFreshnessStatus source="volumetry" />
             {/* Sync Status Badge */}
             <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 flex items-center gap-2 text-xs">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />

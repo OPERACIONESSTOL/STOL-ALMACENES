@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   SupervisorMonthly,
   SupervisorWeekly,
@@ -23,6 +23,7 @@ import { StolLogo } from '../components/StolLogo';
 import { SupervisorLowGradesDiagnostic } from '../components/SupervisorLowGradesDiagnostic';
 import { ExecutiveObservationsSection } from '../components/ExecutiveObservationsSection';
 import { getObservationsByModule } from '../data/executiveObservationsRegistry';
+import { DataFreshnessStatus } from '../components/ManualDataImportPanel';
 
 import {
   Users,
@@ -41,6 +42,16 @@ import {
   TrendingDown,
 } from 'lucide-react';
 
+const loadPerformanceData = <T,>(key: string, fallback: T): T => {
+  try {
+    const saved = localStorage.getItem(key);
+    if (saved) return JSON.parse(saved) as T;
+  } catch (error) {
+    console.warn(`Could not restore supervisor data (${key}):`, error);
+  }
+  return fallback;
+};
+
 export const PerformanceView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'consolidado' | 'mensual' | 'trimestral' | 'observaciones' | 'diagnostico_causal'>('consolidado');
   const [isEditMode, setIsEditMode] = useState<boolean>(true);
@@ -56,11 +67,11 @@ export const PerformanceView: React.FC = () => {
   const [isUpdatingData, setIsUpdatingData] = useState<boolean>(false);
   const [lastUpdateTimestamp, setLastUpdateTimestamp] = useState<string>('Hoy, 10:45 AM');
 
-  const [config, setConfig] = useState<GlobalDashboardConfig>(INITIAL_CONFIG);
-  const [supervisors, setSupervisors] = useState<SupervisorMonthly[]>(INITIAL_SUPERVISORS);
-  const [weeklies, setWeeklies] = useState<SupervisorWeekly[]>(INITIAL_WEEKLIES);
-  const [observations, setObservations] = useState<ObservationItem[]>(INITIAL_OBSERVATIONS);
-  const [quarterly, setQuarterly] = useState<QuarterlySummary>(INITIAL_QUARTERLY);
+  const [config, setConfig] = useState<GlobalDashboardConfig>(() => loadPerformanceData('stol_performance_config_v1', INITIAL_CONFIG));
+  const [supervisors, setSupervisors] = useState<SupervisorMonthly[]>(() => loadPerformanceData('stol_performance_supervisors_v1', INITIAL_SUPERVISORS));
+  const [weeklies, setWeeklies] = useState<SupervisorWeekly[]>(() => loadPerformanceData('stol_performance_weeklies_v1', INITIAL_WEEKLIES));
+  const [observations, setObservations] = useState<ObservationItem[]>(() => loadPerformanceData('stol_performance_observations_v1', INITIAL_OBSERVATIONS));
+  const [quarterly, setQuarterly] = useState<QuarterlySummary>(() => loadPerformanceData('stol_performance_quarterly_v1', INITIAL_QUARTERLY));
 
   const [obsFilterPillar, setObsFilterPillar] = useState<'Todos' | ObservationPillar>('Todos');
   const [obsSearchTerm, setObsSearchTerm] = useState<string>('');
@@ -76,6 +87,18 @@ export const PerformanceView: React.FC = () => {
 
   const [isDataModalOpen, setIsDataModalOpen] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('stol_performance_config_v1', JSON.stringify(config));
+      localStorage.setItem('stol_performance_supervisors_v1', JSON.stringify(supervisors));
+      localStorage.setItem('stol_performance_weeklies_v1', JSON.stringify(weeklies));
+      localStorage.setItem('stol_performance_observations_v1', JSON.stringify(observations));
+      localStorage.setItem('stol_performance_quarterly_v1', JSON.stringify(quarterly));
+    } catch (error) {
+      console.warn('Could not persist supervisor data:', error);
+    }
+  }, [config, supervisors, weeklies, observations, quarterly]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -340,6 +363,7 @@ export const PerformanceView: React.FC = () => {
             <span className="bg-emerald-100 text-emerald-950 font-black text-xs px-3 py-1.5 rounded-xl border border-emerald-300 flex items-center gap-1">
               ✔ Consolidado Oficial
             </span>
+            <DataFreshnessStatus source="performance" />
           </div>
         </div>
 

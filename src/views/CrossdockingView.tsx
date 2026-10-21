@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   CrossdockingSummary,
   CrossdockingDailyRecord,
@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { ExecutiveObservationsSection } from '../components/ExecutiveObservationsSection';
 import { getObservationsByModule } from '../data/executiveObservationsRegistry';
+import { DataFreshnessStatus, ManualDataImportPanel } from '../components/ManualDataImportPanel';
 
 const STORAGE_KEY_SUMMARY = 'stol_crossdocking_summary';
 const STORAGE_KEY_RECORDS = 'stol_crossdocking_records';
@@ -68,13 +69,6 @@ export const CrossdockingView: React.FC = () => {
   // Selected Area tab
   const [activeArea, setActiveArea] = useState<'CROSSDOCKING' | 'ALMACENAMIENTO' | 'DESPACHO'>('CROSSDOCKING');
 
-  // Excel Upload states
-  const [isUploading, setIsUploading] = useState<boolean>(false);
-  const [uploadSuccessMsg, setUploadSuccessMsg] = useState<string | null>(null);
-  const [uploadErrorMsg, setUploadErrorMsg] = useState<string | null>(null);
-  const [dragActive, setDragActive] = useState<boolean>(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-
   // Table filters
   const [searchTerm, setSearchTerm] = useState<string>('');
 
@@ -83,69 +77,27 @@ export const CrossdockingView: React.FC = () => {
     (n || 0).toLocaleString('es-PE', { minimumFractionDigits: d, maximumFractionDigits: d });
 
   // Handle Excel file upload
-  const handleFileUpload = async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    const file = files[0];
-    setIsUploading(true);
-    setUploadSuccessMsg(null);
-    setUploadErrorMsg(null);
-
+  const handleFileUpload = async (file: File): Promise<string> => {
     try {
       const result = await parseCrossdockingExcelFile(file);
 
-      let summaryUpdated = false;
       if (result.summary) {
         setSummary(result.summary);
-        summaryUpdated = true;
       }
 
-      let recordsUpdated = false;
       if (result.records && result.records.length > 0) {
         setRecords(result.records);
-        recordsUpdated = true;
       }
 
       const firstDate = result.records.length > 0 ? result.records[0].fecha : '';
       const lastDate = result.records.length > 0 ? result.records[result.records.length - 1].fecha : '';
 
-      if (recordsUpdated) {
-        setUploadSuccessMsg(
-          `¡Data actualizada con éxito! Pestaña: [${result.sheetName}]. ` +
-            `Resumen B2:D6 cargado (Regular: ${fmt(result.summary?.volRegular || 0, 2)} m³, Ext: ${fmt(result.summary?.volExtraordinario || 0, 2)} m³, Dom/Fer: ${fmt(result.summary?.volDomFer || 0, 2)} m³). ` +
-            `Se importaron ${result.records.length} días de operación (desde ${firstDate} hasta ${lastDate}) con formato Día/Mes/Año verificado.`
-        );
-      } else {
-        setUploadSuccessMsg(
-          `¡Pestaña [${result.sheetName}] leída! Resumen B2:D6 actualizado con éxito. ` +
-            `Nota: Si tienes una tabla de recepciones diarias, verifica que la columna de fechas esté en formato Día/Mes/Año debajo del encabezado "Recepción Cross Docking".`
-        );
-      }
+      return result.records.length > 0
+        ? `Hoja ${result.sheetName}: se importaron ${result.records.length} días, del ${firstDate} al ${lastDate}.`
+        : `Hoja ${result.sheetName}: se actualizó el resumen B2:D6.`;
     } catch (err: any) {
       console.error('Error parsing Crossdocking Excel:', err);
-      setUploadErrorMsg(
-        err.message || 'Error al procesar el archivo Excel. Verifica el formato de la pestaña.'
-      );
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  const handleDrag = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.type === 'dragenter' || e.type === 'dragover') {
-      setDragActive(true);
-    } else if (e.type === 'dragleave') {
-      setDragActive(false);
-    }
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFileUpload(e.dataTransfer.files);
+      throw new Error(err.message || 'Error al procesar el archivo Excel. Verifica el formato de la pestaña.');
     }
   };
 
@@ -185,6 +137,7 @@ export const CrossdockingView: React.FC = () => {
               <span className="bg-blue-500/20 text-blue-300 border border-blue-500/40 text-[11px] font-bold px-2.5 py-0.5 rounded-full">
                 Total Declarado: {fmt(totalVolumenSummary, 2)} m³
               </span>
+              <DataFreshnessStatus source="crossdocking" />
             </div>
 
             <h1 className="text-xl md:text-3xl font-black tracking-tight text-white drop-shadow-sm font-sans">
@@ -419,88 +372,14 @@ export const CrossdockingView: React.FC = () => {
         </div>
       </section>
 
-      {/* 3. EXCEL UPDATE DROPZONE & CONTROL PANEL */}
-      <section className="bg-white border-2 border-slate-200 rounded-2xl p-5 md:p-6 shadow-md">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-200">
-          <div className="flex items-center gap-2">
-            <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-200">
-              <FileSpreadsheet className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-base font-black text-slate-900">
-                Actualizar Información con Archivo Excel
-              </h2>
-              <p className="text-xs text-slate-500">
-                Sube tu archivo de Excel con la pestaña <b>"Crossdocking"</b> para actualizar el resumen B2:D6 y la tabla diaria
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] font-mono font-bold text-emerald-800 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200">
-              Formato Fijo Establecido
-            </span>
-          </div>
-        </div>
-
-        {/* Dropzone */}
-        <div
-          onDragEnter={handleDrag}
-          onDragLeave={handleDrag}
-          onDragOver={handleDrag}
-          onDrop={handleDrop}
-          onClick={() => fileInputRef.current?.click()}
-          className={`mt-4 border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all ${
-            dragActive
-              ? 'border-amber-500 bg-amber-50/50 scale-[1.01]'
-              : 'border-slate-300 hover:border-blue-500 bg-slate-50/50 hover:bg-blue-50/20'
-          }`}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            onChange={(e) => {
-              handleFileUpload(e.target.files);
-              e.target.value = '';
-            }}
-            className="hidden"
-          />
-
-          <div className="w-12 h-12 bg-white rounded-2xl border border-slate-200 shadow-xs flex items-center justify-center mx-auto text-emerald-600 mb-3">
-            <UploadCloud className="w-6 h-6" />
-          </div>
-
-          <div className="text-sm font-black text-slate-800">
-            Haz clic aquí para seleccionar tu archivo Excel o arrástralo a este recuadro
-          </div>
-          <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-            El sistema buscará automáticamente la pestaña <b>"Crossdocking"</b>, actualizará el cuadro <b>B2:D6</b> y leerá las columnas de recepción diaria con formato de fecha <b>Día/Mes/Año</b> (ej. 01/10/2026).
-          </p>
-
-          {isUploading && (
-            <div className="mt-3 text-xs font-bold text-amber-600 flex items-center justify-center gap-1.5">
-              <RefreshCw className="w-4 h-4 animate-spin" />
-              <span>Leyendo y actualizando datos de Crossdocking...</span>
-            </div>
-          )}
-        </div>
-
-        {/* Success or Error messages */}
-        {uploadSuccessMsg && (
-          <div className="mt-4 p-3 bg-emerald-50 border border-emerald-300 rounded-xl text-xs font-bold text-emerald-900 flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-            <span>{uploadSuccessMsg}</span>
-          </div>
-        )}
-
-        {uploadErrorMsg && (
-          <div className="mt-4 p-3 bg-rose-50 border border-rose-300 rounded-xl text-xs font-bold text-rose-900 flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-            <span>{uploadErrorMsg}</span>
-          </div>
-        )}
-      </section>
+      {/* 3. STANDARD MANUAL DATA IMPORT */}
+      <ManualDataImportPanel
+        source="crossdocking"
+        title="Actualizar información de Crossdocking"
+        acceptedExtensions={['.xlsx', '.xls', '.csv']}
+        instructions="Importa el resumen B2:D6 y los registros diarios de la pestaña Crossdocking."
+        onImport={handleFileUpload}
+      />
 
       {/* 4. VISUAL CHARTS OF VOLUME EVOLUTION */}
       <CrossdockingCharts summary={summary} records={records} />

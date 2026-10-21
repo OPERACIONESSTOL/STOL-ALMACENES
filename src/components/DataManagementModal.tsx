@@ -6,7 +6,8 @@ import {
   QuarterlySummary,
   GlobalDashboardConfig,
 } from '../types/performance';
-import { X, Download, Upload, RotateCcw, Target, FileText, CheckCircle2 } from 'lucide-react';
+import { X, Download, RotateCcw, Target, FileText } from 'lucide-react';
+import { ManualDataImportPanel } from './ManualDataImportPanel';
 
 interface DataManagementModalProps {
   isOpen: boolean;
@@ -39,9 +40,6 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
   onImportData,
   onResetDefaults,
 }) => {
-  const [importText, setImportText] = useState<string>('');
-  const [importError, setImportError] = useState<string | null>(null);
-  const [importSuccess, setImportSuccess] = useState<boolean>(false);
   const [metaInput, setMetaInput] = useState<number>(config.metaERU);
 
   if (!isOpen) return null;
@@ -93,28 +91,24 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
     document.body.removeChild(dl);
   };
 
-  const handleImport = () => {
+  const handleImportFile = async (file: File): Promise<string> => {
+    let parsed: any;
     try {
-      setImportError(null);
-      const parsed = JSON.parse(importText);
-      if (!parsed.supervisors || !Array.isArray(parsed.supervisors)) {
-        throw new Error('El JSON no contiene un arreglo válido de supervisores.');
-      }
-      onImportData({
-        supervisors: parsed.supervisors,
-        weeklies: parsed.weeklies || weeklies,
-        observations: parsed.observations || observations,
-        quarterly: parsed.quarterly || quarterly,
-        config: parsed.config,
-      });
-      setImportSuccess(true);
-      setTimeout(() => {
-        setImportSuccess(false);
-        onClose();
-      }, 1500);
-    } catch (err: unknown) {
-      setImportError(err instanceof Error ? err.message : 'Error al parsear el archivo JSON');
+      parsed = JSON.parse(await file.text());
+    } catch {
+      throw new Error('El archivo no contiene un respaldo JSON válido.');
     }
+    if (!Array.isArray(parsed.supervisors)) {
+      throw new Error('El JSON no contiene una lista válida de supervisores.');
+    }
+    onImportData({
+      supervisors: parsed.supervisors,
+      weeklies: parsed.weeklies || weeklies,
+      observations: parsed.observations || observations,
+      quarterly: parsed.quarterly || quarterly,
+      config: parsed.config,
+    });
+    return `Se importó el respaldo de ${parsed.supervisors.length} supervisores.`;
   };
 
   const handleSaveMeta = () => {
@@ -200,39 +194,14 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
             </div>
           </div>
 
-          {/* Import JSON */}
-          <div className="border-t border-slate-200 pt-4 space-y-2">
-            <h4 className="font-black text-slate-900 uppercase text-xs">
-              Restaurar o Importar Datos desde JSON
-            </h4>
-            <textarea
-              rows={4}
-              placeholder="Pega aquí el contenido JSON de una copia de seguridad..."
-              value={importText}
-              onChange={(e) => setImportText(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-xs font-mono focus:outline-none focus:border-blue-600 focus:bg-white"
+          <div className="border-t border-slate-200 pt-4">
+            <ManualDataImportPanel
+              source="performance"
+              title="Cargar respaldo de evaluación de Supervisores"
+              acceptedExtensions={['.json']}
+              instructions="Formato de respaldo exportado desde esta sección."
+              onImport={handleImportFile}
             />
-            {importError && (
-              <div className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold">
-                {importError}
-              </div>
-            )}
-            {importSuccess && (
-              <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-semibold flex items-center gap-1.5">
-                <CheckCircle2 className="w-4 h-4" />
-                <span>¡Datos importados y actualizados exitosamente!</span>
-              </div>
-            )}
-            <div className="flex justify-end">
-              <button
-                onClick={handleImport}
-                disabled={!importText.trim()}
-                className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold rounded-xl transition-colors"
-              >
-                <Upload className="w-4 h-4" />
-                <span>Cargar e Importar</span>
-              </button>
-            </div>
           </div>
 
           {/* Reset Defaults */}

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import initialDataJson from '../data/initialOvertimeData.json';
 import { OvertimeRecord, BonusRecord, OvertimeDataset, OvertimeFilterState } from '../types/overtime';
 import {
@@ -15,7 +15,6 @@ import { getObservationsByModule } from '../data/executiveObservationsRegistry';
 import {
   Clock,
   Calendar,
-  Upload,
   Download,
   Filter,
   Search,
@@ -35,10 +34,30 @@ import {
 } from 'lucide-react';
 
 const INITIAL_DATA: OvertimeDataset = initialDataJson as unknown as OvertimeDataset;
+const OVERTIME_STORAGE_KEY = 'stol_overtime_dataset_v1';
+
+const loadOvertimeDataset = (): OvertimeDataset => {
+  try {
+    const saved = localStorage.getItem(OVERTIME_STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved) as OvertimeDataset;
+      if (Array.isArray(parsed.hh) && Array.isArray(parsed.bo)) return parsed;
+    }
+  } catch (error) {
+    console.warn('Could not restore HHEE data:', error);
+  }
+  return INITIAL_DATA;
+};
 
 export const OvertimeView: React.FC = () => {
-  const [dataset, setDataset] = useState<OvertimeDataset>(INITIAL_DATA);
-  const [sourceName, setSourceName] = useState<string>('Datos oficiales cargados');
+  const [dataset, setDataset] = useState<OvertimeDataset>(loadOvertimeDataset);
+  const [sourceName, setSourceName] = useState<string>(() => {
+    try {
+      return localStorage.getItem('stol_overtime_source_name') || 'Datos iniciales (sin carga manual)';
+    } catch {
+      return 'Datos iniciales (sin carga manual)';
+    }
+  });
   const [activeTab, setActiveTab] = useState<'charts' | 'matrix' | 'table' | 'areas'>('charts');
 
   // Compute overall min and max dates
@@ -66,9 +85,15 @@ export const OvertimeView: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 20;
 
-  const [isDragging, setIsDragging] = useState(false);
   const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(OVERTIME_STORAGE_KEY, JSON.stringify(dataset));
+    } catch (error) {
+      console.warn('Could not persist HHEE data:', error);
+    }
+  }, [dataset]);
 
   const showToast = (text: string, type: 'success' | 'error' = 'success') => {
     setToastMessage({ text, type });
@@ -158,39 +183,35 @@ export const OvertimeView: React.FC = () => {
   }, [filteredRecords, currentPage]);
 
   // Handle file upload
-  const handleFileUpload = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
+  const handleImportFile = async (file: File): Promise<string> => {
+    try {
+      const buffer = await file.arrayBuffer();
+      if (!buffer.byteLength) throw new Error('El archivo está vacío o no se pudo leer.');
+      const parsed = parseOvertimeWorkbook(buffer);
+      if (!parsed.hh.length) throw new Error('El archivo no contiene filas de horas extras.');
+      setDataset(parsed);
+      setSourceName(`Archivo: ${file.name}`);
       try {
-        const buffer = e.target?.result as ArrayBuffer;
-        if (!buffer) throw new Error('Archivo vacío o ilegible.');
-        const parsed = parseOvertimeWorkbook(buffer);
-        setDataset(parsed);
-        setSourceName(`Archivo: ${file.name}`);
-
-        const dates = parsed.hh.map((r) => r.f).filter(Boolean);
-        if (dates.length > 0) {
-          const minD = excelSerialToIso(Math.min(...dates));
-          const maxD = excelSerialToIso(Math.max(...dates));
-          setFilters((prev) => ({
-            ...prev,
-            startDate: minD,
-            endDate: maxD,
-          }));
-        }
-        setCurrentPage(1);
-        showToast(
-          `¡Excel importado correctamente! ${parsed.hh.length.toLocaleString('es-PE')} filas HHEE procesadas.`,
-          'success'
-        );
-      } catch (err: any) {
-        showToast(`Error al procesar el archivo Excel: ${err?.message || 'Formato no compatible'}`, 'error');
+        localStorage.setItem('stol_overtime_source_name', `Archivo: ${file.name}`);
+      } catch (error) {
+        console.warn('Could not persist HHEE source name:', error);
       }
-    };
-    reader.onerror = () => {
-      showToast('Error de lectura del archivo.', 'error');
-    };
-    reader.readAsArrayBuffer(file);
+
+      const dates = parsed.hh.map((record) => record.f).filter(Boolean);
+      if (dates.length > 0) {
+        const minD = excelSerialToIso(Math.min(...dates));
+        const maxD = excelSerialToIso(Math.max(...dates));
+        setFilters((prev) => ({ ...prev, startDate: minD, endDate: maxD }));
+      }
+      setCurrentPage(1);
+      const resultMessage = `Se procesaron ${parsed.hh.length.toLocaleString('es-PE')} filas HHEE y ${parsed.bo.length.toLocaleString('es-PE')} filas de bonos.`;
+      showToast(resultMessage, 'success');
+      return resultMessage;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Formato no compatible.';
+      showToast(`No se pudo procesar el archivo: ${message}`, 'error');
+      throw new Error(message);
+    }
   };
 
   const handleResetFilters = () => {
@@ -213,20 +234,7 @@ export const OvertimeView: React.FC = () => {
   };
 
   return (
-    <div
-      className={`space-y-6 ${isDragging ? 'ring-4 ring-blue-500/50 bg-blue-50/20 rounded-3xl p-2 transition-all' : ''}`}
-      onDragOver={(e) => {
-        e.preventDefault();
-        setIsDragging(true);
-      }}
-      onDragLeave={() => setIsDragging(false)}
-      onDrop={(e) => {
-        e.preventDefault();
-        setIsDragging(false);
-        const file = e.dataTransfer.files?.[0];
-        if (file) handleFileUpload(file);
-      }}
-    >
+    <div className="space-y-6">
       {/* Toast Notification */}
       {toastMessage && (
         <div
@@ -244,6 +252,14 @@ export const OvertimeView: React.FC = () => {
           <span>{toastMessage.text}</span>
         </div>
       )}
+
+      <ManualDataImportPanel
+        source="overtime"
+        title="Actualizar horas extras y bonos"
+        acceptedExtensions={['.xlsx', '.xlsm', '.xls']}
+        instructions="Importa el archivo oficial de HHEE. Se actualizan filas, fechas y métricas de bonos."
+        onImport={handleImportFile}
+      />
 
       {/* Top Header Card */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs relative overflow-hidden">
@@ -277,24 +293,6 @@ export const OvertimeView: React.FC = () => {
 
           {/* Quick Actions */}
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold transition-all shadow-sm shadow-blue-700/20 cursor-pointer active:scale-98"
-            >
-              <Upload className="w-3.5 h-3.5" />
-              <span>Subir Excel Actualizado</span>
-            </button>
-            <input
-              type="file"
-              ref={fileInputRef}
-              accept=".xlsx,.xlsm,.xls"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) handleFileUpload(file);
-              }}
-              className="hidden"
-            />
-
             <button
               onClick={handleExport}
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition-colors cursor-pointer"

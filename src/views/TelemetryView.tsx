@@ -143,6 +143,13 @@ export const TelemetryView: React.FC = () => {
         </div>
       </header>
 
+      <div role="alert" className="flex items-start gap-2.5 bg-amber-50 border border-amber-300 rounded-xl px-4 py-3 text-xs text-amber-950">
+        <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-700" />
+        <p>
+          <strong>Datos por verificar:</strong> esta pestaña muestra valores precargados y aún no cuenta con una carga manual asociada.
+        </p>
+      </div>
+
       {/* 2. SIX VIVID EXECUTIVE VOLUME KPI CARDS */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3.5">
         {/* KPI 1: Volumen Procesado */}

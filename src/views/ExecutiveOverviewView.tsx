@@ -20,6 +20,7 @@ import { AppModule } from '../components/Sidebar';
 import { StolLogo } from '../components/StolLogo';
 import { ExecutiveObservationsSection } from '../components/ExecutiveObservationsSection';
 import { getObservationsByModule } from '../data/executiveObservationsRegistry';
+import { DataFreshnessOverview } from '../components/ManualDataImportPanel';
 
 interface ExecutiveOverviewViewProps {
   onNavigate: (module: AppModule) => void;
@@ -134,6 +135,8 @@ export const ExecutiveOverviewView: React.FC<ExecutiveOverviewViewProps> = ({
           </div>
         </div>
       </section>
+
+      <DataFreshnessOverview />
 
       {/* 2. TOP EXECUTIVE SUMMARY CARDS */}
       <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">

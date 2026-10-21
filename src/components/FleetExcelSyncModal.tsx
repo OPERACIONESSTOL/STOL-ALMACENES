@@ -1,18 +1,14 @@
-import React, { useState, useRef } from 'react';
+import React from 'react';
 import {
   FileSpreadsheet,
-  UploadCloud,
-  CheckCircle2,
-  AlertTriangle,
   RotateCcw,
   X,
-  FileCheck,
   Info,
   Truck,
-  Sparkles,
 } from 'lucide-react';
 import { Equipment, MaintenanceIncident } from '../types/fleet';
 import { parseFleetExcelFile } from '../utils/fleetExcel';
+import { ManualDataImportPanel } from './ManualDataImportPanel';
 
 interface FleetExcelSyncModalProps {
   isOpen: boolean;
@@ -31,28 +27,10 @@ export const FleetExcelSyncModal: React.FC<FleetExcelSyncModalProps> = ({
   onDataUpdated,
   onResetToDefaults,
 }) => {
-  const [isDragging, setIsDragging] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [feedback, setFeedback] = useState<{
-    type: 'success' | 'error' | 'info';
-    title: string;
-    message: string;
-    details?: string[];
-  } | null>(null);
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
   if (!isOpen) return null;
 
-  const handleProcessFile = async (file: File) => {
-    setIsLoading(true);
-    setFeedback(null);
-
+  const handleProcessFile = async (file: File): Promise<string> => {
     try {
-      if (!file.name.match(/\.(xlsx|xls|csv)$/i)) {
-        throw new Error('Formato no compatible. Por favor sube tu archivo Excel establecido (.xlsx, .xls) o .csv.');
-      }
-
       const result = await parseFleetExcelFile(file);
 
       // Save to localStorage (v3 clean storage)
@@ -66,67 +44,16 @@ export const FleetExcelSyncModal: React.FC<FleetExcelSyncModalProps> = ({
       }
 
       onDataUpdated(result.equipos, result.incidencias, result.detectedMonths);
-
-      setFeedback({
-        type: 'success',
-        title: '¡Información Sincronizada con Éxito!',
-        message: result.message,
-        details: [
-          `✅ ${result.equipmentCount} equipos cargados y auditados`,
-          `⏱️ Métrica de consumo: Columna «Horas usadas» procesada (fórmulas celestes intactas sin números de odómetro de 17,000h)`,
-          `🚜 Relevo Derco (24/09): Soporte activo para HGR-279 a 286 y SGR-017 nueva Backup`,
-          `📅 Meses en orden cronológico: ${result.detectedMonths.join(', ')}`,
-          `📑 Hojas procesadas: ${result.sheetNames.join(', ')}`,
-          `💡 Tus fórmulas originales no fueron alteradas ni modificadas.`,
-        ],
-      });
-    } catch (err: any) {
+      return `${result.message} Se cargaron ${result.equipmentCount} equipos. Hojas: ${result.sheetNames.join(', ')}. Meses: ${result.detectedMonths.join(', ')}.`;
+    } catch (err) {
       console.error('Error processing fleet excel:', err);
-      setFeedback({
-        type: 'error',
-        title: 'Error al procesar el archivo Excel',
-        message: err.message || 'No se pudo leer el archivo. Verifica que contenga la información de flota u horómetros.',
-      });
-    } finally {
-      setIsLoading(false);
+      throw new Error(err instanceof Error ? err.message : 'No se pudo leer el archivo de flota u horómetros.');
     }
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      handleProcessFile(e.target.files[0]);
-    }
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleProcessFile(e.dataTransfer.files[0]);
-    }
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
   };
 
   const handleReset = () => {
     if (window.confirm('¿Deseas restablecer los equipos y la bitácora a los datos oficiales originales de STOL?')) {
       onResetToDefaults();
-      setFeedback({
-        type: 'info',
-        title: 'Datos Restablecidos',
-        message: 'Se han restaurado los 19 equipos y la bitácora oficial original de STOL.',
-      });
     }
   };
 
@@ -182,85 +109,13 @@ export const FleetExcelSyncModal: React.FC<FleetExcelSyncModalProps> = ({
             </div>
           </div>
 
-          {/* Drag & Drop Zone */}
-          <div
-            onDrop={handleDrop}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onClick={() => fileInputRef.current?.click()}
-            className={`border-3 border-dashed rounded-3xl p-8 text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-3 ${
-              isDragging
-                ? 'border-amber-500 bg-amber-50/70 scale-[0.99]'
-                : 'border-slate-300 hover:border-amber-500 hover:bg-slate-50'
-            }`}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              onChange={handleFileChange}
-              className="hidden"
-            />
-
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-amber-500 to-amber-400 text-slate-950 flex items-center justify-center shadow-lg shadow-amber-500/20">
-              <UploadCloud className="w-8 h-8" />
-            </div>
-
-            <div>
-              <div className="text-base font-black text-slate-900">
-                Arrastra aquí tu archivo Excel o haz clic para examinar
-              </div>
-              <div className="text-xs text-slate-500 mt-1">
-                Formatos compatibles: <b className="text-slate-700">.xlsx, .xls, .csv</b> (e.g. DATA_DASHBOARD_EJECUTIVO.xlsx)
-              </div>
-            </div>
-
-            <button
-              type="button"
-              className="mt-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-md cursor-pointer transition-all flex items-center gap-2"
-            >
-              <FileCheck className="w-4 h-4 text-amber-400" />
-              <span>Seleccionar Archivo de mi Equipo</span>
-            </button>
-          </div>
-
-          {/* Loading Indicator */}
-          {isLoading && (
-            <div className="bg-slate-900 text-white rounded-2xl p-4 flex items-center justify-center gap-3 text-xs font-bold animate-pulse">
-              <div className="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
-              <span>Procesando archivo de flota y analizando horómetros...</span>
-            </div>
-          )}
-
-          {/* Feedback Message */}
-          {feedback && (
-            <div
-              className={`rounded-2xl p-4.5 border-2 text-xs space-y-2 ${
-                feedback.type === 'success'
-                  ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
-                  : feedback.type === 'error'
-                  ? 'bg-rose-50 border-rose-300 text-rose-950'
-                  : 'bg-blue-50 border-blue-300 text-blue-950'
-              }`}
-            >
-              <div className="flex items-center gap-2 font-black text-sm">
-                {feedback.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-600" />}
-                {feedback.type === 'error' && <AlertTriangle className="w-5 h-5 text-rose-600" />}
-                {feedback.type === 'info' && <Info className="w-5 h-5 text-blue-600" />}
-                <span>{feedback.title}</span>
-              </div>
-              <p className="leading-relaxed">{feedback.message}</p>
-              {feedback.details && (
-                <div className="mt-2 pt-2 border-t border-emerald-200/60 space-y-1 font-mono text-[11px]">
-                  {feedback.details.map((d, idx) => (
-                    <div key={idx} className="text-emerald-800">
-                      {d}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          <ManualDataImportPanel
+            source="fleet"
+            title="Actualizar horómetros, flota e incidencias"
+            acceptedExtensions={['.xlsx', '.xls', '.csv']}
+            instructions="Carga el formato oficial con las hojas de flota y bitácora."
+            onImport={handleProcessFile}
+          />
 
           {/* Columns & Specs Guide */}
           <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">

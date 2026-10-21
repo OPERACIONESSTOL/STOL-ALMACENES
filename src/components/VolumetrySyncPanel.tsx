@@ -1,7 +1,6 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import {
   Cloud,
-  UploadCloud,
   RefreshCw,
   FileSpreadsheet,
   Download,
@@ -23,6 +22,7 @@ import {
   ParseSkuMasterResult,
 } from '../utils/skuMasterExcel';
 import { SkuMeasurement } from '../types/volumetry';
+import { ManualDataImportPanel } from './ManualDataImportPanel';
 
 interface VolumetrySyncPanelProps {
   onDataLoaded: (newMeasurements: SkuMeasurement[], mode: 'replace' | 'merge') => void;
@@ -48,16 +48,12 @@ export const VolumetrySyncPanel: React.FC<VolumetrySyncPanelProps> = ({
   onTriggerSync,
 }) => {
   const [localUrl, setLocalUrl] = useState(onlineUrl);
-  const [isDragging, setIsDragging] = useState(false);
   const [loadMode, setLoadMode] = useState<'replace' | 'merge'>('replace');
-  const [fileLoading, setFileLoading] = useState(false);
   const [feedback, setFeedback] = useState<{
     type: 'success' | 'error' | 'info';
     message: string;
     details?: string;
   } | null>(null);
-
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const handleSaveUrl = (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,54 +65,13 @@ export const VolumetrySyncPanel: React.FC<VolumetrySyncPanelProps> = ({
     });
   };
 
-  const processFile = async (file: File) => {
-    if (!file.name.match(/\.(xlsx|xls|csv|xlsm)$/i)) {
-      setFeedback({
-        type: 'error',
-        message: 'Formato no soportado',
-        details: 'Por favor suba un archivo en formato Excel (.xlsx, .xls) o CSV.',
-      });
-      return;
+  const handleImportFile = async (file: File): Promise<string> => {
+    const result: ParseSkuMasterResult = await parseSkuMasterFile(file);
+    if (!result.success || result.measurements.length === 0) {
+      throw new Error(result.errorMessage || 'Verifica que el archivo tenga las columnas de SKU y dimensiones.');
     }
-
-    setFileLoading(true);
-    setFeedback(null);
-
-    try {
-      const result: ParseSkuMasterResult = await parseSkuMasterFile(file);
-
-      if (result.success && result.measurements.length > 0) {
-        onDataLoaded(result.measurements, loadMode);
-        setFeedback({
-          type: 'success',
-          message: `¡Carga exitosa! Se procesaron ${result.totalRowsParsed} registros de SKUs.`,
-          details: `Hoja: "${result.sheetName}" • Volumen: ${result.totalVolumeM3} m³ • Conformes: ${result.conformeCount} • Discrepancias Críticas: ${result.criticalDiscrepanciesCount}`,
-        });
-      } else {
-        setFeedback({
-          type: 'error',
-          message: 'No se pudieron extraer datos del archivo',
-          details: result.errorMessage || 'Verifique que la hoja contenga las columnas de SKU y dimensiones.',
-        });
-      }
-    } catch (err: any) {
-      setFeedback({
-        type: 'error',
-        message: 'Error al procesar el archivo',
-        details: err?.message || 'Ocurrió un error inesperado al leer el Excel.',
-      });
-    } finally {
-      setFileLoading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      processFile(e.dataTransfer.files[0]);
-    }
+    onDataLoaded(result.measurements, loadMode);
+    return `Se procesaron ${result.totalRowsParsed} SKUs en la hoja ${result.sheetName}. Volumen: ${result.totalVolumeM3} m³; conformes: ${result.conformeCount}; discrepancias críticas: ${result.criticalDiscrepanciesCount}.`;
   };
 
   // Quick simulation of new incoming daily SKUs from operations for demonstration
@@ -204,6 +159,26 @@ export const VolumetrySyncPanel: React.FC<VolumetrySyncPanelProps> = ({
       details: `Se agregaron 3 nuevas mediciones del día ${today} registradas por operaciones en rampa.`,
     });
   };
+
+  const modeSelector = (
+    <div className="flex items-center gap-2 text-xs">
+      <span className="font-bold text-slate-700">Al cargar:</span>
+      <button
+        type="button"
+        onClick={() => setLoadMode('replace')}
+        className={`px-3 py-1.5 rounded-lg border font-bold ${loadMode === 'replace' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-300'}`}
+      >
+        Reemplazar maestro
+      </button>
+      <button
+        type="button"
+        onClick={() => setLoadMode('merge')}
+        className={`px-3 py-1.5 rounded-lg border font-bold ${loadMode === 'merge' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-300'}`}
+      >
+        Combinar por SKU
+      </button>
+    </div>
+  );
 
   return (
     <div className="space-y-6 text-slate-800">
@@ -398,109 +373,17 @@ export const VolumetrySyncPanel: React.FC<VolumetrySyncPanelProps> = ({
           </div>
         </div>
 
-        {/* RIGHT: MANUAL DRAG & DROP / FILE SELECTOR */}
-        <div className="lg:col-span-5 bg-white border-2 border-slate-200 rounded-2xl p-5 sm:p-6 shadow-sm space-y-5 flex flex-col justify-between">
-          <div className="space-y-3">
-            <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
-              <div className="w-10 h-10 rounded-xl bg-cyan-50 text-cyan-700 flex items-center justify-center border border-cyan-200">
-                <UploadCloud className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-sm font-black text-slate-900 uppercase">
-                  2. Carga Directa de Archivo Excel
-                </h3>
-                <p className="text-xs text-slate-500">Arrastre su archivo .xlsx o .csv desde la carpeta</p>
-              </div>
-            </div>
-
-            {/* Mode selector */}
-            <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs">
-              <button
-                type="button"
-                onClick={() => setLoadMode('replace')}
-                className={`flex-1 py-1.5 px-3 rounded-lg font-bold text-center transition-all ${
-                  loadMode === 'replace'
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-500 hover:text-slate-900'
-                }`}
-              >
-                Reemplazar Todo el Maestro
-              </button>
-              <button
-                type="button"
-                onClick={() => setLoadMode('merge')}
-                className={`flex-1 py-1.5 px-3 rounded-lg font-bold text-center transition-all ${
-                  loadMode === 'merge'
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-500 hover:text-slate-900'
-                }`}
-              >
-                Anexar / Actualizar SKUs
-              </button>
-            </div>
-
-            {/* Drag & Drop Zone */}
-            <div
-              onDragOver={(e) => {
-                e.preventDefault();
-                setIsDragging(true);
-              }}
-              onDragLeave={() => setIsDragging(false)}
-              onDrop={handleDrop}
-              onClick={() => fileInputRef.current?.click()}
-              className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all flex flex-col items-center justify-center space-y-2.5 ${
-                isDragging
-                  ? 'border-blue-600 bg-blue-50/80 scale-[0.99]'
-                  : 'border-slate-300 hover:border-blue-500 hover:bg-slate-50/60'
-              }`}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".xlsx,.xls,.csv,.xlsm"
-                className="hidden"
-                onChange={(e) => {
-                  if (e.target.files && e.target.files.length > 0) {
-                    processFile(e.target.files[0]);
-                  }
-                }}
-              />
-
-              <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
-                {fileLoading ? (
-                  <RefreshCw className="w-6 h-6 animate-spin" />
-                ) : (
-                  <FileSpreadsheet className="w-6 h-6" />
-                )}
-              </div>
-
-              <div>
-                <p className="text-xs font-bold text-slate-800">
-                  {fileLoading
-                    ? 'Analizando y extrayendo SKUs...'
-                    : 'Haga clic para seleccionar o arrastre el archivo aquí'}
-                </p>
-                <p className="text-[11px] text-slate-400 mt-0.5">
-                  Formatos compatibles: .xlsx, .xls, .xlsm, .csv
-                </p>
-              </div>
-
-              <div className="px-3 py-1 rounded-full bg-slate-100 text-[10.5px] font-mono text-slate-600 font-bold border border-slate-200">
-                Detecta automáticamente hojas de "MAESTRO" y "SKU"
-              </div>
-            </div>
-          </div>
-
-          {/* Validation guarantees */}
-          <div className="pt-3 border-t border-slate-100 space-y-1.5 text-[11px] text-slate-500">
-            <div className="flex items-center gap-1.5 text-emerald-700 font-bold">
-              <ShieldCheck className="w-4 h-4 text-emerald-600" />
-              <span>Validación Automática de Integridad Dimensional</span>
-            </div>
-            <p>
-              Calcula m³ físicos, m³ teóricos de WMS, porcentaje de desviación y clasificación
-              de discrepancias en tiempo real sin requerir fórmulas en el Excel.
-            </p>
+        <div className="lg:col-span-5 space-y-3">
+          {modeSelector}
+          <ManualDataImportPanel
+            source="volumetry"
+            title="Carga manual de maestro de SKU"
+            acceptedExtensions={['.xlsx', '.xls', '.xlsm', '.csv']}
+            instructions="Se detectan las hojas MAESTRO y SKU; se validan dimensiones y discrepancias."
+            onImport={handleImportFile}
+          />
+          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-[11px] text-emerald-900">
+            <strong>Validación dimensional:</strong> calcula m³ físicos, m³ WMS y desviaciones sin modificar el archivo original.
           </div>
         </div>
       </div>
