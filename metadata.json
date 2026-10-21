@@ -1,0 +1,6 @@
+{
+  "name": "STOL Intranet Operativa & Directiva",
+  "description": "Intranet corporativa STOL para alimentación operativa de mediciones, volumetría de SKUs, horas extras, desempeño y supervisión ejecutiva del Directorio.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
