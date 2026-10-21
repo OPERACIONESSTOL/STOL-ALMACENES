@@ -41,6 +41,68 @@ import {
 
 export const RECEPTION_PHOTOS_STORAGE_KEY = 'stol_fleet_reception_photos';
 const STORAGE_KEY = RECEPTION_PHOTOS_STORAGE_KEY;
+const RECEPTION_DATABASE = 'stol-fleet-reception';
+const RECEPTION_STORE = 'photos';
+
+interface StoredReceptionPhoto {
+  photo: EquipmentReceptionPhoto;
+  mediaBlob?: Blob;
+}
+
+const openReceptionDatabase = (): Promise<IDBDatabase> =>
+  new Promise((resolve, reject) => {
+    const request = indexedDB.open(RECEPTION_DATABASE, 1);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore(RECEPTION_STORE);
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('No se pudo abrir el almacenamiento'));
+  });
+
+const readStoredReceptionPhotos = async (): Promise<StoredReceptionPhoto[] | null> => {
+  const database = await openReceptionDatabase();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction(RECEPTION_STORE, 'readonly');
+    const request = transaction.objectStore(RECEPTION_STORE).get('all');
+    request.onsuccess = () => resolve((request.result as StoredReceptionPhoto[] | undefined) || null);
+    request.onerror = () => reject(request.error || new Error('No se pudieron leer las evidencias'));
+    transaction.oncomplete = () => database.close();
+    transaction.onerror = () => {
+      database.close();
+      reject(transaction.error || new Error('No se pudieron leer las evidencias'));
+    };
+  });
+};
+
+const writeStoredReceptionPhotos = async (
+  photos: EquipmentReceptionPhoto[],
+  mediaBlobs: Map<string, Blob>
+): Promise<void> => {
+  const database = await openReceptionDatabase();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction(RECEPTION_STORE, 'readwrite');
+    const storedPhotos: StoredReceptionPhoto[] = photos.map((photo) => {
+      const mediaBlob = mediaBlobs.get(photo.id);
+      return {
+        photo: mediaBlob ? { ...photo, imageUrl: '' } : photo,
+        mediaBlob,
+      };
+    });
+    transaction.objectStore(RECEPTION_STORE).put(storedPhotos, 'all');
+    transaction.oncomplete = () => {
+      database.close();
+      resolve();
+    };
+    transaction.onerror = () => {
+      database.close();
+      reject(transaction.error || new Error('No se pudieron guardar las evidencias'));
+    };
+    transaction.onabort = () => {
+      database.close();
+      reject(transaction.error || new Error('No se pudieron guardar las evidencias'));
+    };
+  });
+};
 
 export const CATEGORY_LABELS: Record<ReceptionPhotoCategory, { label: string; icon: string; color: string }> = {
   HOROMETRO: { label: 'Lectura de Horómetro Inicial', icon: '⏱️', color: 'bg-blue-100 text-blue-800 border-blue-200' },
@@ -212,14 +274,40 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
     return INITIAL_RECEPTION_PHOTOS;
   });
 
-  // Save to localStorage
+  const initialPhotosRef = useRef(photos);
+  const mediaBlobsRef = useRef<Map<string, Blob>>(new Map());
+  const [isStorageReady, setIsStorageReady] = useState(false);
+
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(photos));
-    } catch {
-      // quota or private browsing handling
-    }
-  }, [photos]);
+    let isMounted = true;
+    const loadPhotos = async () => {
+      try {
+        const storedPhotos = await readStoredReceptionPhotos();
+        if (storedPhotos) {
+          const mediaBlobs = new Map<string, Blob>();
+          const restoredPhotos = storedPhotos.map(({ photo, mediaBlob }) => {
+            if (!mediaBlob) return photo;
+            mediaBlobs.set(photo.id, mediaBlob);
+            return { ...photo, imageUrl: URL.createObjectURL(mediaBlob) };
+          });
+          mediaBlobsRef.current = mediaBlobs;
+          if (isMounted) setPhotos(restoredPhotos);
+        } else {
+          await writeStoredReceptionPhotos(initialPhotosRef.current, mediaBlobsRef.current);
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      } catch (error) {
+        console.warn('Could not load fleet reception media:', error);
+      } finally {
+        if (isMounted) setIsStorageReady(true);
+      }
+    };
+
+    void loadPhotos();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Modal states
   const [isUploadModalOpen, setIsUploadModalOpen] = useState<boolean>(false);
@@ -360,11 +448,12 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
   };
 
   // Submit new photo(s) & video(s)
-  const handleSaveReceptionPhoto = () => {
+  const handleSaveReceptionPhoto = async () => {
     if (stagedFiles.length === 0) {
       alert('Por favor selecciona o arrastra al menos una fotografía o video de recepción / incidencia.');
       return;
     }
+    if (!isStorageReady) return;
 
     // Find equipment metadata
     const eqMeta = FLEET_EQUIPOS.find((e) => e.codigo === newEquipCode);
@@ -397,7 +486,20 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
       }),
     }));
 
-    setPhotos((prev) => [...newPhotosCreated, ...prev]);
+    const updatedPhotos = [...newPhotosCreated, ...photos];
+    newPhotosCreated.forEach((photo, index) => {
+      mediaBlobsRef.current.set(photo.id, stagedFiles[index].file);
+    });
+    try {
+      await writeStoredReceptionPhotos(updatedPhotos, mediaBlobsRef.current);
+    } catch (error) {
+      newPhotosCreated.forEach((photo) => mediaBlobsRef.current.delete(photo.id));
+      console.error('Could not save fleet reception media:', error);
+      alert('No se pudieron guardar los archivos. No se han eliminado; verifica el almacenamiento disponible e inténtalo de nuevo.');
+      return;
+    }
+
+    setPhotos(updatedPhotos);
 
     // Automatically align equipment filter to newly uploaded unit so user immediately sees their upload
     setEquipmentFilter(newEquipCode);
@@ -413,10 +515,21 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
   };
 
   // Delete photo or video
-  const handleDeletePhoto = (id: string, e?: React.MouseEvent) => {
+  const handleDeletePhoto = async (id: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (window.confirm('¿Deseas eliminar este registro del expediente?')) {
-      setPhotos((prev) => prev.filter((p) => p.id !== id));
+      const photoToDelete = photos.find((photo) => photo.id === id);
+      const updatedPhotos = photos.filter((photo) => photo.id !== id);
+      try {
+        await writeStoredReceptionPhotos(updatedPhotos, mediaBlobsRef.current);
+      } catch (error) {
+        console.error('Could not delete fleet reception media:', error);
+        alert('No se pudo guardar la eliminación. Inténtalo de nuevo.');
+        return;
+      }
+      if (photoToDelete?.imageUrl.startsWith('blob:')) URL.revokeObjectURL(photoToDelete.imageUrl);
+      mediaBlobsRef.current.delete(id);
+      setPhotos(updatedPhotos);
       if (lightboxPhotoIndex !== null) {
         setLightboxPhotoIndex(null);
       }
@@ -424,10 +537,20 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
   };
 
   // Reset to initial sample
-  const handleResetToSample = () => {
+  const handleResetToSample = async () => {
     if (window.confirm('¿Restablecer las evidencias iniciales de demostración de STOL?')) {
+      try {
+        await writeStoredReceptionPhotos(INITIAL_RECEPTION_PHOTOS, new Map());
+      } catch (error) {
+        console.error('Could not reset fleet reception media:', error);
+        alert('No se pudieron restablecer las evidencias. Inténtalo de nuevo.');
+        return;
+      }
+      photos.forEach((photo) => {
+        if (photo.imageUrl.startsWith('blob:')) URL.revokeObjectURL(photo.imageUrl);
+      });
+      mediaBlobsRef.current.clear();
       setPhotos(INITIAL_RECEPTION_PHOTOS);
-      localStorage.removeItem(STORAGE_KEY);
       setSuccessToast('Se restauraron las evidencias iniciales de demostración.');
       setTimeout(() => setSuccessToast(null), 4000);
     }
@@ -1227,11 +1350,11 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
 
               <button
                 onClick={handleSaveReceptionPhoto}
-                disabled={stagedFiles.length === 0}
+                disabled={stagedFiles.length === 0 || isUploading || !isStorageReady}
                 className="flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-50 text-slate-950 font-black px-5 py-2.5 rounded-xl shadow-md transition-all cursor-pointer text-xs"
               >
                 <CheckCircle2 className="w-4 h-4" />
-                <span>Guardar en Expediente ({stagedFiles.length})</span>
+                <span>{isStorageReady ? `Guardar en Expediente (${stagedFiles.length})` : 'Preparando almacenamiento...'}</span>
               </button>
             </div>
           </div>
