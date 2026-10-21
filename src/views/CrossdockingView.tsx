@@ -12,7 +12,6 @@ import {
 } from '../utils/crossdockingExcel';
 import { CrossdockingCharts } from '../components/CrossdockingCharts';
 import {
-  TrendingUp,
   FileSpreadsheet,
   UploadCloud,
   RefreshCw,
@@ -31,11 +30,17 @@ import {
 import { ExecutiveObservationsSection } from '../components/ExecutiveObservationsSection';
 import { getObservationsByModule } from '../data/executiveObservationsRegistry';
 import { DataFreshnessStatus, ManualDataImportPanel } from '../components/ManualDataImportPanel';
+import { ReportModuleHeader, getReportMonthFromDate } from '../components/ReportModuleHeader';
 
 const STORAGE_KEY_SUMMARY = 'stol_crossdocking_summary';
 const STORAGE_KEY_RECORDS = 'stol_crossdocking_records';
 
-export const CrossdockingView: React.FC = () => {
+interface CrossdockingViewProps {
+  selectedMonth: string;
+  onSelectMonth: (month: string) => void;
+}
+
+export const CrossdockingView: React.FC<CrossdockingViewProps> = ({ selectedMonth, onSelectMonth }) => {
   // 1. Data state loaded from localStorage or default
   const [summary, setSummary] = useState<CrossdockingSummary>(() => {
     try {
@@ -65,9 +70,6 @@ export const CrossdockingView: React.FC = () => {
       localStorage.setItem(STORAGE_KEY_RECORDS, JSON.stringify(records));
     } catch {}
   }, [records]);
-
-  // Selected Area tab
-  const [activeArea, setActiveArea] = useState<'CROSSDOCKING' | 'ALMACENAMIENTO' | 'DESPACHO'>('CROSSDOCKING');
 
   // Table filters
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -102,7 +104,15 @@ export const CrossdockingView: React.FC = () => {
   };
 
   // Filtered records
-  const filteredRecords = records.filter((r) => {
+  const availableMonths = Array.from(new Set(records.map((record) => getReportMonthFromDate(record.fecha)).filter((month): month is string => Boolean(month))));
+  const monthRecords = records.filter((record) => selectedMonth === 'Todos' || getReportMonthFromDate(record.fecha) === selectedMonth);
+  const monthSummary: CrossdockingSummary = {
+    volRegular: monthRecords.reduce((sum, record) => sum + record.volRegular, 0),
+    volExtraordinario: monthRecords.reduce((sum, record) => sum + record.volExtraordinario, 0),
+    volDomFer: monthRecords.reduce((sum, record) => sum + record.volDomFerNoct, 0),
+    reprocesos: summary.reprocesos,
+  };
+  const filteredRecords = monthRecords.filter((r) => {
     if (!searchTerm.trim()) return true;
     const q = searchTerm.toLowerCase();
     return (
@@ -113,93 +123,19 @@ export const CrossdockingView: React.FC = () => {
     );
   });
 
-  const totalVolumenSummary =
-    summary.volRegular + summary.volExtraordinario + summary.volDomFer + summary.reprocesos;
+  const totalVolumenSummary = monthSummary.volRegular + monthSummary.volExtraordinario + monthSummary.volDomFer;
 
   return (
     <div className="space-y-6 pb-12 font-sans text-[#1A1A2E]">
-      {/* 1. TOP EXECUTIVE HERO BANNER */}
-      <header className="bg-gradient-to-r from-[#1A1A2E] via-[#1E293B] to-[#0F172A] rounded-2xl border-2 border-slate-700/80 shadow-xl p-5 md:p-6 text-white relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute bottom-0 left-1/4 w-80 h-80 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
-
-        <div className="relative z-10 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-5">
-          <div className="space-y-2 max-w-3xl">
-            {/* Area Switcher Pills */}
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                <TrendingUp className="w-4 h-4 text-amber-400" />
-                EVOLUCIÓN DE VOLÚMENES DECLARADOS POR ÁREA
-              </span>
-              <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold px-2.5 py-0.5 rounded-full">
-                Área Activa: Crossdocking
-              </span>
-              <span className="bg-blue-500/20 text-blue-300 border border-blue-500/40 text-[11px] font-bold px-2.5 py-0.5 rounded-full">
-                Total Declarado: {fmt(totalVolumenSummary, 2)} m³
-              </span>
-              <DataFreshnessStatus source="crossdocking" />
-            </div>
-
-            <h1 className="text-xl md:text-3xl font-black tracking-tight text-white drop-shadow-sm font-sans">
-              Volúmenes de Recepción &amp; Operación Cross Docking
-            </h1>
-            <p className="text-slate-300 text-xs md:text-sm leading-relaxed max-w-2xl font-normal">
-              Monitoreo diario de cubicaje programado y recibido en patio vs. nave, control de LPNs, proveedores con
-              tardanza, volumen regular, extraordinario, dominical/feriado/nocturno y m³ por atención extraordinaria.
-            </p>
-          </div>
-
-          <div className="flex flex-col items-start lg:items-end gap-3 w-full lg:w-auto shrink-0">
-            {/* Area selection buttons */}
-            <div className="flex items-center gap-1.5 bg-slate-900/90 p-1.5 rounded-xl border border-slate-700/80 shadow-inner w-full lg:w-auto overflow-x-auto">
-              <button
-                onClick={() => setActiveArea('CROSSDOCKING')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer whitespace-nowrap ${
-                  activeArea === 'CROSSDOCKING'
-                    ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 shadow-md shadow-amber-500/30'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800'
-                }`}
-              >
-                📍 1. Crossdocking (Activo)
-              </button>
-
-              <button
-                onClick={() => setActiveArea('ALMACENAMIENTO')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                  activeArea === 'ALMACENAMIENTO'
-                    ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-                }`}
-                title="Área de Almacenamiento y Custodia de Racks"
-              >
-                📦 2. Almacenamiento (Próx.)
-              </button>
-
-              <button
-                onClick={() => setActiveArea('DESPACHO')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                  activeArea === 'DESPACHO'
-                    ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-                }`}
-                title="Área de Despacho y Salida"
-              >
-                🚚 3. Despacho (Próx.)
-              </button>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto justify-start lg:justify-end">
-              <button
-                onClick={() => window.print()}
-                className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-md cursor-pointer border border-slate-600"
-              >
-                <Printer className="w-3.5 h-3.5 text-slate-400" />
-                <span>Imprimir / PDF</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </header>
+      <ReportModuleHeader
+        title="Crossdocking: volúmenes y recepciones"
+        description="Consulta el volumen recibido, cumplimiento de programación, proveedores tardíos y operaciones extraordinarias del mes."
+        selectedMonth={selectedMonth}
+        availableMonths={availableMonths}
+        onSelectMonth={onSelectMonth}
+        eyebrow="OPERACIÓN · CROSSDOCKING"
+        actions={<><DataFreshnessStatus source="crossdocking" /><button onClick={() => window.print()} className="px-3 py-2 rounded-lg bg-slate-800 text-white text-xs font-bold">Imprimir / PDF</button></>}
+      />
 
       {/* 2. CUADRO RESUMEN B2:D6 (EXACTO DEL EXCEL DEL USUARIO) */}
       <section className="bg-white border-2 border-slate-200 rounded-2xl p-5 md:p-6 shadow-md">
@@ -248,7 +184,7 @@ export const CrossdockingView: React.FC = () => {
                       Vol Regular
                     </td>
                     <td className="py-1.5 px-4 text-right font-mono font-black text-slate-900">
-                      {fmt(summary.volRegular, 2)}
+                      {fmt(monthSummary.volRegular, 2)}
                     </td>
                   </tr>
                   <tr className="hover:bg-blue-50/50">
@@ -256,7 +192,7 @@ export const CrossdockingView: React.FC = () => {
                       Vol Extraordinario
                     </td>
                     <td className="py-1.5 px-4 text-right font-mono font-black text-slate-900">
-                      {fmt(summary.volExtraordinario, 2)}
+                      {fmt(monthSummary.volExtraordinario, 2)}
                     </td>
                   </tr>
                   <tr className="hover:bg-blue-50/50">
@@ -264,7 +200,7 @@ export const CrossdockingView: React.FC = () => {
                       Vol Dom Fer
                     </td>
                     <td className="py-1.5 px-4 text-right font-mono font-black text-slate-900">
-                      {fmt(summary.volDomFer, 2)}
+                      {fmt(monthSummary.volDomFer, 2)}
                     </td>
                   </tr>
                   <tr className="hover:bg-blue-50/50">
@@ -272,7 +208,7 @@ export const CrossdockingView: React.FC = () => {
                       Reprocesos
                     </td>
                     <td className="py-1.5 px-4 text-right font-mono font-black text-slate-900">
-                      {fmt(summary.reprocesos, 2)}
+                      {summary.reprocesos > 0 ? 'No desglosado por día' : fmt(0, 2)}
                     </td>
                   </tr>
                 </tbody>
@@ -297,10 +233,10 @@ export const CrossdockingView: React.FC = () => {
               </div>
               <div className="my-2">
                 <div className="text-2xl font-black font-mono tracking-tight text-white">
-                  {fmt(summary.volRegular, 2)} m³
+                  {fmt(monthSummary.volRegular, 2)} m³
                 </div>
                 <div className="text-[11px] font-bold text-blue-200 mt-0.5">
-                  Operación Ordinaria ({totalVolumenSummary > 0 ? ((summary.volRegular / totalVolumenSummary) * 100).toFixed(1) : 0}%)
+                  Operación Ordinaria ({totalVolumenSummary > 0 ? ((monthSummary.volRegular / totalVolumenSummary) * 100).toFixed(1) : 0}%)
                 </div>
               </div>
               <div className="pt-2 border-t border-blue-400/30 text-[10.5px] text-blue-100 flex items-center justify-between">
@@ -317,10 +253,10 @@ export const CrossdockingView: React.FC = () => {
               </div>
               <div className="my-2">
                 <div className="text-2xl font-black font-mono tracking-tight text-white">
-                  {fmt(summary.volExtraordinario, 2)} m³
+                  {fmt(monthSummary.volExtraordinario, 2)} m³
                 </div>
                 <div className="text-[11px] font-bold text-amber-100 mt-0.5">
-                  Sobrecupo &amp; Ventana Ext. ({totalVolumenSummary > 0 ? ((summary.volExtraordinario / totalVolumenSummary) * 100).toFixed(1) : 0}%)
+                  Sobrecupo &amp; Ventana Ext. ({totalVolumenSummary > 0 ? ((monthSummary.volExtraordinario / totalVolumenSummary) * 100).toFixed(1) : 0}%)
                 </div>
               </div>
               <div className="pt-2 border-t border-amber-400/30 text-[10.5px] text-amber-100 flex items-center justify-between">
@@ -337,7 +273,7 @@ export const CrossdockingView: React.FC = () => {
               </div>
               <div className="my-2">
                 <div className="text-2xl font-black font-mono tracking-tight text-white">
-                  {fmt(summary.volDomFer, 2)} m³
+                  {fmt(monthSummary.volDomFer, 2)} m³
                 </div>
                 <div className="text-[11px] font-bold text-purple-200 mt-0.5">
                   Domingos, Feriados &amp; Turnos Nocturnos
@@ -357,7 +293,7 @@ export const CrossdockingView: React.FC = () => {
               </div>
               <div className="my-2">
                 <div className="text-2xl font-black font-mono tracking-tight text-white">
-                  {fmt(summary.reprocesos, 2)} m³
+                  {summary.reprocesos > 0 ? 'No desglosado por día' : fmt(0, 2)}
                 </div>
                 <div className="text-[11px] font-bold text-emerald-200 mt-0.5">
                   Cero reprocesos registrados
@@ -382,7 +318,7 @@ export const CrossdockingView: React.FC = () => {
       />
 
       {/* 4. VISUAL CHARTS OF VOLUME EVOLUTION */}
-      <CrossdockingCharts summary={summary} records={records} />
+      <CrossdockingCharts summary={monthSummary} records={monthRecords} />
 
       {/* DIRECTORIAL OBSERVATIONS FOR CROSSDOCKING */}
       <ExecutiveObservationsSection

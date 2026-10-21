@@ -151,6 +151,8 @@ function MainAppLayout({ onSwitchToWebsite }: MainAppLayoutProps) {
               <div className="animate-in fade-in duration-200">
                 <ExecutiveOverviewView
                   onNavigate={(mod) => setActiveModule(mod)}
+                  selectedMonth={selectedMonth}
+                  onSelectMonth={setSelectedMonth}
                   supervisorOctAvg={84.3}
                   bestSupervisorName="Jaiter Girón"
                   bestSupervisorGrade={88.1}
@@ -175,42 +177,42 @@ function MainAppLayout({ onSwitchToWebsite }: MainAppLayoutProps) {
             {/* View 2: Módulo de Mediciones y Control de Volumetría */}
             {activeModule === 'volumetry' && (
               <div className="animate-in fade-in duration-200">
-                <VolumetryView />
+                <VolumetryView selectedMonth={selectedMonth} onSelectMonth={setSelectedMonth} />
               </div>
             )}
 
             {/* View 2.5: Módulo de Evolución de Volúmenes por Área (Crossdocking B2:D6) */}
             {activeModule === 'crossdocking' && (
               <div className="animate-in fade-in duration-200">
-                <CrossdockingView />
+                <CrossdockingView selectedMonth={selectedMonth} onSelectMonth={setSelectedMonth} />
               </div>
             )}
 
             {/* View 3: Módulo de Desempeño de Supervisores (60/20/20) */}
             {activeModule === 'supervisors' && (
               <div className="animate-in fade-in duration-200">
-                <PerformanceView />
+                <PerformanceView selectedMonth={selectedMonth} onSelectMonth={setSelectedMonth} />
               </div>
             )}
 
             {/* View 4: Módulo de Horas Extras Operativas (HHEE & Bono) */}
             {activeModule === 'overtime' && (
               <div className="animate-in fade-in duration-200">
-                <OvertimeView />
+                <OvertimeView selectedMonth={selectedMonth} onSelectMonth={setSelectedMonth} />
               </div>
             )}
 
             {/* View 5: Módulo de Horómetros y Flota (19 Equipos) */}
             {activeModule === 'fleet' && (
               <div className="animate-in fade-in duration-200">
-                <FleetView />
+                <FleetView selectedMonth={selectedMonth} onSelectMonth={setSelectedMonth} />
               </div>
             )}
 
             {/* View 6: Módulo de Telemetría RT & CodeSandbox */}
             {activeModule === 'telemetry' && (
               <div className="animate-in fade-in duration-200 bg-slate-950 p-4 sm:p-6 rounded-2xl border-2 border-slate-800 shadow-xl">
-                <TelemetryView />
+                <TelemetryView selectedMonth={selectedMonth} onSelectMonth={setSelectedMonth} />
               </div>
             )}
           </div>

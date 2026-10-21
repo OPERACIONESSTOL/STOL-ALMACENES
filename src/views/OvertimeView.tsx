@@ -13,6 +13,7 @@ import { OvertimeMatrix } from '../components/OvertimeMatrix';
 import { ExecutiveObservationsSection } from '../components/ExecutiveObservationsSection';
 import { getObservationsByModule } from '../data/executiveObservationsRegistry';
 import { ManualDataImportPanel } from '../components/ManualDataImportPanel';
+import { REPORT_MONTHS, ReportModuleHeader, getReportMonthFromDate } from '../components/ReportModuleHeader';
 import {
   Clock,
   Calendar,
@@ -50,7 +51,12 @@ const loadOvertimeDataset = (): OvertimeDataset => {
   return INITIAL_DATA;
 };
 
-export const OvertimeView: React.FC = () => {
+interface OvertimeViewProps {
+  selectedMonth: string;
+  onSelectMonth: (month: string) => void;
+}
+
+export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSelectMonth }) => {
   const [dataset, setDataset] = useState<OvertimeDataset>(loadOvertimeDataset);
   const [sourceName, setSourceName] = useState<string>(() => {
     try {
@@ -82,6 +88,34 @@ export const OvertimeView: React.FC = () => {
     selectedWeek: 'ALL',
     searchQuery: '',
   });
+
+  const availableMonths = useMemo(() => {
+    const months = new Set(
+      dataset.hh
+        .map((record) => getReportMonthFromDate(excelSerialToIso(record.f)))
+        .filter((month): month is string => Boolean(month))
+    );
+    return REPORT_MONTHS.filter((month) => months.has(month));
+  }, [dataset]);
+
+  const selectedMonthRange = useMemo(() => {
+    if (selectedMonth === 'Todos') return initialDateRange;
+    const monthRecords = dataset.hh.filter(
+      (record) => getReportMonthFromDate(excelSerialToIso(record.f)) === selectedMonth
+    );
+    if (!monthRecords.length) return { min: '', max: '' };
+    const dates = monthRecords.map((record) => excelSerialToIso(record.f));
+    return { min: dates.sort()[0], max: dates.sort()[dates.length - 1] };
+  }, [dataset, selectedMonth, initialDateRange]);
+
+  useEffect(() => {
+    setFilters((previous) => ({
+      ...previous,
+      startDate: selectedMonthRange.min,
+      endDate: selectedMonthRange.max,
+    }));
+    setCurrentPage(1);
+  }, [selectedMonth, selectedMonthRange]);
 
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 20;
@@ -117,6 +151,7 @@ export const OvertimeView: React.FC = () => {
     const endSerial = filters.endDate ? isoToExcelSerial(filters.endDate) : Infinity;
 
     return dataset.hh.filter((r) => {
+      if (selectedMonth !== 'Todos' && getReportMonthFromDate(excelSerialToIso(r.f)) !== selectedMonth) return false;
       // Date range
       if (r.f < startSerial || r.f > endSerial) return false;
 

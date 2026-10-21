@@ -24,6 +24,8 @@ import { DataFreshnessOverview } from '../components/ManualDataImportPanel';
 
 interface ExecutiveOverviewViewProps {
   onNavigate: (module: AppModule) => void;
+  selectedMonth: string;
+  onSelectMonth: (month: string) => void;
   // Metrics from supervisors
   supervisorOctAvg: number;
   bestSupervisorName: string;
@@ -48,6 +50,8 @@ interface ExecutiveOverviewViewProps {
 
 export const ExecutiveOverviewView: React.FC<ExecutiveOverviewViewProps> = ({
   onNavigate,
+  selectedMonth,
+  onSelectMonth,
   supervisorOctAvg,
   bestSupervisorName,
   bestSupervisorGrade,

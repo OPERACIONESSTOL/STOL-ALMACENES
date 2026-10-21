@@ -31,7 +31,12 @@ import {
 import { ExecutiveObservationsSection } from '../components/ExecutiveObservationsSection';
 import { getObservationsByModule } from '../data/executiveObservationsRegistry';
 
-export const TelemetryView: React.FC = () => {
+interface TelemetryViewProps {
+  selectedMonth: string;
+  onSelectMonth: (month: string) => void;
+}
+
+export const TelemetryView: React.FC<TelemetryViewProps> = ({ selectedMonth, onSelectMonth }) => {
   const [selectedProcessFilter, setSelectedProcessFilter] = useState<string>('Todos');
   const [selectedTimeframe, setSelectedTimeframe] = useState<'dia' | 'semana' | 'mes'>('mes');
   const [activeTab, setActiveTab] = useState<'procesos' | 'tendencia' | 'comparativa'>('procesos');

@@ -52,7 +52,12 @@ const loadPerformanceData = <T,>(key: string, fallback: T): T => {
   return fallback;
 };
 
-export const PerformanceView: React.FC = () => {
+interface PerformanceViewProps {
+  selectedMonth: string;
+  onSelectMonth: (month: string) => void;
+}
+
+export const PerformanceView: React.FC<PerformanceViewProps> = ({ selectedMonth, onSelectMonth }) => {
   const [activeTab, setActiveTab] = useState<'consolidado' | 'mensual' | 'trimestral' | 'observaciones' | 'diagnostico_causal'>('consolidado');
   const [isEditMode, setIsEditMode] = useState<boolean>(true);
 

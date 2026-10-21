@@ -42,6 +42,7 @@ import { getObservationsByModule } from '../data/executiveObservationsRegistry';
 import { VolumetryCharts } from '../components/VolumetryCharts';
 import { VolumetrySyncPanel } from '../components/VolumetrySyncPanel';
 import { DataFreshnessStatus, ManualDataImportPanel } from '../components/ManualDataImportPanel';
+import { ReportModuleHeader, getReportMonthFromDate } from '../components/ReportModuleHeader';
 import {
   parseSkuMasterFile,
   ParseSkuMasterResult,
@@ -55,7 +56,12 @@ const LOCAL_STORAGE_KEY_URL = 'stol_sku_public_url_v1';
 const LOCAL_STORAGE_KEY_LAST_SYNC = 'stol_sku_last_sync_v1';
 const LOCAL_STORAGE_KEY_INTERVAL = 'stol_sku_sync_interval_v1';
 
-export const VolumetryView: React.FC = () => {
+interface VolumetryViewProps {
+  selectedMonth: string;
+  onSelectMonth: (month: string) => void;
+}
+
+export const VolumetryView: React.FC<VolumetryViewProps> = ({ selectedMonth, onSelectMonth }) => {
   // Load saved measurements from localStorage or fall back to initial
   const [measurements, setMeasurements] = useState<SkuMeasurement[]>(() => {
     try {
@@ -222,43 +228,49 @@ export const VolumetryView: React.FC = () => {
     return `Se procesaron ${result.totalRowsParsed} SKUs en la hoja ${result.sheetName}. Volumen: ${result.totalVolumeM3} m³; conformes: ${result.conformeCount}; discrepancias críticas: ${result.criticalDiscrepanciesCount}.`;
   };
 
+  const monthMeasurements = useMemo(
+    () => measurements.filter((measurement) => selectedMonth === 'Todos' || getReportMonthFromDate(measurement.fecha) === selectedMonth),
+    [measurements, selectedMonth]
+  );
+  const availableMonths = Array.from(new Set(measurements.map((measurement) => getReportMonthFromDate(measurement.fecha)).filter((month): month is string => Boolean(month))));
+
   // Calculate real-time overall KPIs based on loaded measurements
   const totalVolumeM3 = useMemo(() => {
-    return parseFloat(measurements.reduce((acc, m) => acc + m.volumenM3, 0).toFixed(2));
-  }, [measurements]);
+    return parseFloat(monthMeasurements.reduce((acc, m) => acc + m.volumenM3, 0).toFixed(2));
+  }, [monthMeasurements]);
 
   const totalCatalogSkus = 1200;
-  const measuredSkusCount = measurements.length;
+  const measuredSkusCount = monthMeasurements.length;
   const pendingSkusCount = Math.max(0, totalCatalogSkus - measuredSkusCount);
   const progressPct = ((measuredSkusCount / totalCatalogSkus) * 100).toFixed(1);
 
   const criticalDiscrepancies = useMemo(
-    () => measurements.filter((m) => m.estado === 'Discrepancia Crítica').length,
-    [measurements]
+    () => monthMeasurements.filter((m) => m.estado === 'Discrepancia Crítica').length,
+    [monthMeasurements]
   );
 
   const minorVariations = useMemo(
-    () => measurements.filter((m) => m.estado === 'Variación Menor').length,
-    [measurements]
+    () => monthMeasurements.filter((m) => m.estado === 'Variación Menor').length,
+    [monthMeasurements]
   );
 
   const conformesCount = useMemo(
-    () => measurements.filter((m) => m.estado === 'Conforme').length,
-    [measurements]
+    () => monthMeasurements.filter((m) => m.estado === 'Conforme').length,
+    [monthMeasurements]
   );
 
   // Estimated Freight Impact: Extra m3 caused by critical discrepancies
   const freightImpactSoles = useMemo(() => {
-    const extraM3 = measurements
+    const extraM3 = monthMeasurements
       .filter((m) => m.estado === 'Discrepancia Crítica')
       .reduce((acc, m) => acc + Math.max(0, m.volumenM3 - m.masterVolumenM3), 0);
     // Average freight cost: ~S/ 320 per m3 in secondary transport
     return Math.round(extraM3 * 320 * 18); // scaled to monthly volume
-  }, [measurements]);
+  }, [monthMeasurements]);
 
   // Filtered table for Matrix tab
   const filteredList = useMemo(() => {
-    return measurements.filter((item) => {
+    return monthMeasurements.filter((item) => {
       const matchProcess =
         selectedProcessFilter === 'Todos' || item.proceso === selectedProcessFilter;
       const matchStatus =
@@ -271,7 +283,7 @@ export const VolumetryView: React.FC = () => {
 
       return matchProcess && matchStatus && matchSearch;
     });
-  }, [measurements, selectedProcessFilter, selectedStatusFilter, skuSearchQuery]);
+  }, [monthMeasurements, selectedProcessFilter, selectedStatusFilter, skuSearchQuery]);
 
   const handleCreateMeasurement = (e: React.FormEvent) => {
     e.preventDefault();
@@ -383,83 +395,35 @@ export const VolumetryView: React.FC = () => {
 
   return (
     <div className="space-y-6 text-[#1A1A2E] font-sans">
-      {/* 1. TOP MODULE HEADER WITH ONLINE SYNC STATUS STRIP */}
-      <div className="bg-white border-2 border-slate-200 rounded-2xl p-5 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-900 border border-blue-200">
-                Pilar 1 · Logística & Operaciones
-              </span>
-              <span className="text-[11px] font-mono text-slate-500 font-bold">
-                {measurements.length} SKUs Registrados
-              </span>
-            </div>
-            <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
-              Control Volumétrico, Cubicaje & Maestro de SKUs
-            </h1>
-            <p className="text-xs sm:text-sm text-slate-500">
-              Operaciones alimenta las mediciones físicas desde la carpeta pública corporativa · El Directorio
-              supervisa discrepancias de cubicaje y toma decisiones estratégicas de transporte y almacenaje.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2 flex-wrap">
+      <ReportModuleHeader
+        title="Control volumétrico y auditoría de SKUs"
+        description="Revisa las mediciones físicas, discrepancias frente al maestro WMS y el volumen cubicado durante el mes seleccionado."
+        selectedMonth={selectedMonth}
+        availableMonths={availableMonths}
+        onSelectMonth={onSelectMonth}
+        eyebrow="LOGÍSTICA · VOLUMETRÍA"
+        actions={
+          <>
             <DataFreshnessStatus source="volumetry" />
-            {/* Sync Status Badge */}
-            <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 flex items-center gap-2 text-xs">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-              <div>
-                <div className="text-[10px] text-slate-400 font-bold uppercase">Sincronización en Línea</div>
-                <div className="font-mono text-slate-700 font-bold text-[11px] truncate max-w-[200px]">
-                  {lastSyncTime || 'Conectado a Carpeta'}
-                </div>
-              </div>
-            </div>
-
-            {/* Quick Trigger Sync Button */}
             <button
-              onClick={handleTriggerSync}
-              disabled={isSyncing}
-              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer ${
-                isSyncing
-                  ? 'bg-blue-100 text-blue-800 cursor-not-allowed'
-                  : 'bg-blue-600 hover:bg-blue-700 text-white'
-              }`}
+              onClick={() => exportMeasurementsToFullExcel(monthMeasurements)}
+              className="px-3 py-2 rounded-lg bg-slate-800 text-white text-xs font-bold"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-              <span>{isSyncing ? 'Sincronizando...' : 'Sincronizar en Línea'}</span>
+              Exportar Excel
             </button>
+          </>
+        }
+      />
 
-            {/* Export Full Excel */}
-            <button
-              onClick={() => exportMeasurementsToFullExcel(measurements)}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold border border-slate-300 transition-colors cursor-pointer"
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
-              <span>Exportar Excel</span>
-            </button>
-          </div>
+      {syncBannerMessage && (
+        <div role="status" className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl text-emerald-950 text-xs flex items-center justify-between">
+          <span className="font-bold">{syncBannerMessage}</span>
+          <button onClick={() => setSyncBannerMessage(null)} className="text-xs font-bold text-emerald-700 hover:text-emerald-900">Cerrar</button>
         </div>
+      )}
 
-        {/* Sync Success / Alert Toast */}
-        {syncBannerMessage && (
-          <div className="mt-3 p-3 bg-emerald-50 border border-emerald-300 rounded-xl text-emerald-950 text-xs flex items-center justify-between animate-in fade-in">
-            <div className="flex items-center gap-2 font-bold">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-              <span>{syncBannerMessage}</span>
-            </div>
-            <button
-              onClick={() => setSyncBannerMessage(null)}
-              className="text-xs font-bold text-emerald-700 hover:text-emerald-900"
-            >
-              ✕
-            </button>
-          </div>
-        )}
-
-        {/* NAVIGATION SUB-TABS */}
-        <div className="mt-5 pt-3 border-t border-slate-100 flex items-center gap-2 overflow-x-auto text-xs font-bold">
+      <div className="bg-white border border-slate-200 rounded-xl px-3 py-2 shadow-sm">
+        <div className="flex items-center gap-2 overflow-x-auto text-xs font-bold">
           <button
             onClick={() => setActiveTab('charts')}
             className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all cursor-pointer whitespace-nowrap ${
@@ -483,7 +447,7 @@ export const VolumetryView: React.FC = () => {
             <Table className="w-4 h-4" />
             <span>Maestro de SKUs & Auditoría WMS</span>
             <span className="px-1.5 py-0.2 bg-blue-100 text-blue-900 rounded-full text-[10px]">
-              {measurements.length}
+              {monthMeasurements.length}
             </span>
           </button>
 
@@ -562,7 +526,7 @@ export const VolumetryView: React.FC = () => {
             </div>
           </div>
           <div className="pt-2 border-t border-slate-100 text-[11px] text-slate-500 font-medium">
-            Registrado en <strong>{measurements.length.toLocaleString()}</strong> SKUs activos
+            Registrado en <strong>{monthMeasurements.length.toLocaleString()}</strong> SKUs activos en {selectedMonth}
           </div>
         </div>
 
@@ -665,7 +629,7 @@ export const VolumetryView: React.FC = () => {
               </span>
             </div>
 
-            <VolumetryCharts measurements={measurements} />
+            <VolumetryCharts measurements={monthMeasurements} />
           </div>
         </div>
       )}
@@ -693,7 +657,7 @@ export const VolumetryView: React.FC = () => {
                 <span>Registrar Nueva Medición</span>
               </button>
               <button
-                onClick={() => exportMeasurementsToFullExcel(measurements)}
+                onClick={() => exportMeasurementsToFullExcel(monthMeasurements)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs border border-emerald-300 transition-colors cursor-pointer"
               >
                 <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
@@ -836,7 +800,7 @@ export const VolumetryView: React.FC = () => {
 
           <div className="pt-2 flex items-center justify-between text-xs text-slate-500 font-medium">
             <span>
-              Mostrando <strong>{filteredList.length}</strong> de <strong>{measurements.length}</strong> SKUs
+              Mostrando <strong>{filteredList.length}</strong> de <strong>{monthMeasurements.length}</strong> SKUs en {selectedMonth}
             </span>
             <span>
               Conformes: <strong className="text-emerald-700">{conformesCount}</strong> | Críticos:{' '}

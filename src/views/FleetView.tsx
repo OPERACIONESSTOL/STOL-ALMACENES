@@ -34,7 +34,12 @@ import { FleetReceptionUploader } from '../components/FleetReceptionUploader';
 import { DataFreshnessStatus, ManualDataImportPanel } from '../components/ManualDataImportPanel';
 import { parseFleetExcelFile, sortMonthsChronologically, getMonthChronologicalIndex } from '../utils/fleetExcel';
 
-export const FleetView: React.FC = () => {
+interface FleetViewProps {
+  selectedMonth: string;
+  onSelectMonth: (month: string) => void;
+}
+
+export const FleetView: React.FC<FleetViewProps> = ({ selectedMonth, onSelectMonth }) => {
   const [fleetTab, setFleetTab] = useState<'AUDITORIA' | 'RECEPCION'>('AUDITORIA');
   const [receptionEquipCode, setReceptionEquipCode] = useState<string | null>(null);
 
@@ -84,7 +89,7 @@ export const FleetView: React.FC = () => {
     return sortMonthsChronologically(Array.from(months));
   });
 
-  const [activeMonth, setActiveMonth] = useState<string>('Setiembre');
+  const activeMonth = selectedMonth;
   const [lastUploadNotice, setLastUploadNotice] = useState<string | null>(null);
   const [chartFilter, setChartFilter] = useState<'ALL' | 'MONTACARGA' | 'ELEVADOR' | 'EXCESO'>('ALL');
   const [incTypeFilter, setIncTypeFilter] = useState<'ALL' | 'CORRECTIVO' | 'PREVENTIVO'>('ALL');
@@ -120,7 +125,7 @@ export const FleetView: React.FC = () => {
       const sorted = sortMonthsChronologically(detectedMonths);
       setAvailableMonths(sorted);
       if (!sorted.includes(activeMonth)) {
-        setActiveMonth(sorted[sorted.length - 1] || 'Setiembre');
+        onSelectMonth(sorted[sorted.length - 1] || 'Setiembre');
       }
     }
   };
