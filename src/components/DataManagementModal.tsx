@@ -7,7 +7,6 @@ import {
   GlobalDashboardConfig,
 } from '../types/performance';
 import { X, Download, RotateCcw, Target, FileText } from 'lucide-react';
-import { ManualDataImportPanel } from './ManualDataImportPanel';
 
 interface DataManagementModalProps {
   isOpen: boolean;
@@ -18,13 +17,6 @@ interface DataManagementModalProps {
   weeklies: SupervisorWeekly[];
   observations: ObservationItem[];
   quarterly: QuarterlySummary;
-  onImportData: (payload: {
-    supervisors: SupervisorMonthly[];
-    weeklies: SupervisorWeekly[];
-    observations: ObservationItem[];
-    quarterly: QuarterlySummary;
-    config?: Partial<GlobalDashboardConfig>;
-  }) => void;
   onResetDefaults: () => void;
 }
 
@@ -37,7 +29,6 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
   weeklies,
   observations,
   quarterly,
-  onImportData,
   onResetDefaults,
 }) => {
   const [metaInput, setMetaInput] = useState<number>(config.metaERU);
@@ -89,26 +80,6 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
     document.body.appendChild(dl);
     dl.click();
     document.body.removeChild(dl);
-  };
-
-  const handleImportFile = async (file: File): Promise<string> => {
-    let parsed: any;
-    try {
-      parsed = JSON.parse(await file.text());
-    } catch {
-      throw new Error('El archivo no contiene un respaldo JSON válido.');
-    }
-    if (!Array.isArray(parsed.supervisors)) {
-      throw new Error('El JSON no contiene una lista válida de supervisores.');
-    }
-    onImportData({
-      supervisors: parsed.supervisors,
-      weeklies: parsed.weeklies || weeklies,
-      observations: parsed.observations || observations,
-      quarterly: parsed.quarterly || quarterly,
-      config: parsed.config,
-    });
-    return `Se importó el respaldo de ${parsed.supervisors.length} supervisores.`;
   };
 
   const handleSaveMeta = () => {
@@ -192,16 +163,6 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
                 <span>Exportar Base Completa (JSON)</span>
               </button>
             </div>
-          </div>
-
-          <div className="border-t border-slate-200 pt-4">
-            <ManualDataImportPanel
-              source="performance"
-              title="Cargar respaldo de evaluación de Supervisores"
-              acceptedExtensions={['.json']}
-              instructions="Formato de respaldo exportado desde esta sección."
-              onImport={handleImportFile}
-            />
           </div>
 
           {/* Reset Defaults */}

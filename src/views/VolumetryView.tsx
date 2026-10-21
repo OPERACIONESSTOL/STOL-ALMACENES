@@ -41,8 +41,10 @@ import { ExecutiveObservationsSection } from '../components/ExecutiveObservation
 import { getObservationsByModule } from '../data/executiveObservationsRegistry';
 import { VolumetryCharts } from '../components/VolumetryCharts';
 import { VolumetrySyncPanel } from '../components/VolumetrySyncPanel';
-import { DataFreshnessStatus } from '../components/ManualDataImportPanel';
+import { DataFreshnessStatus, ManualDataImportPanel } from '../components/ManualDataImportPanel';
 import {
+  parseSkuMasterFile,
+  ParseSkuMasterResult,
   fetchAndParseSkuMasterFromUrl,
   exportMeasurementsToFullExcel,
   downloadOfficialSkuMasterTemplate,
@@ -92,6 +94,7 @@ export const VolumetryView: React.FC = () => {
 
   // Active Sub-tab
   const [activeTab, setActiveTab] = useState<'charts' | 'matrix' | 'sync' | 'governance'>('charts');
+  const [loadMode, setLoadMode] = useState<'replace' | 'merge'>('replace');
 
   // Filters for Matrix tab
   const [selectedProcessFilter, setSelectedProcessFilter] = useState<string>('Todos');
@@ -208,6 +211,15 @@ export const VolumetryView: React.FC = () => {
     try {
       localStorage.setItem(LOCAL_STORAGE_KEY_LAST_SYNC, timeStr);
     } catch (e) {}
+  };
+
+  const handleManualImport = async (file: File): Promise<string> => {
+    const result: ParseSkuMasterResult = await parseSkuMasterFile(file);
+    if (!result.success || result.measurements.length === 0) {
+      throw new Error(result.errorMessage || 'Verifica las columnas de SKU y dimensiones del archivo.');
+    }
+    handleDataLoaded(result.measurements, loadMode);
+    return `Se procesaron ${result.totalRowsParsed} SKUs en la hoja ${result.sheetName}. Volumen: ${result.totalVolumeM3} m³; conformes: ${result.conformeCount}; discrepancias críticas: ${result.criticalDiscrepanciesCount}.`;
   };
 
   // Calculate real-time overall KPIs based on loaded measurements
@@ -500,6 +512,33 @@ export const VolumetryView: React.FC = () => {
             <span>Decisiones Estratégicas para Directorio</span>
           </button>
         </div>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="font-bold text-slate-700">Al cargar el maestro:</span>
+          <button
+            type="button"
+            onClick={() => setLoadMode('replace')}
+            className={`px-3 py-1.5 rounded-lg border font-bold ${loadMode === 'replace' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-300'}`}
+          >
+            Reemplazar maestro
+          </button>
+          <button
+            type="button"
+            onClick={() => setLoadMode('merge')}
+            className={`px-3 py-1.5 rounded-lg border font-bold ${loadMode === 'merge' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-300'}`}
+          >
+            Combinar por SKU
+          </button>
+        </div>
+        <ManualDataImportPanel
+          source="volumetry"
+          title="Cargar maestro de SKU y mediciones"
+          acceptedExtensions={['.xlsx', '.xls', '.xlsm', '.csv']}
+          instructions="Se detectan las hojas MAESTRO y SKU; se validan dimensiones y discrepancias."
+          onImport={handleManualImport}
+        />
       </div>
 
       {/* 2. TOP EXECUTIVE VOLUMETRY KPI STRIP (Always visible for quick oversight) */}

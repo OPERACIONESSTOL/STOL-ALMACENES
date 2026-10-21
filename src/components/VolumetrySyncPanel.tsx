@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   Cloud,
   RefreshCw,
-  FileSpreadsheet,
   Download,
   CheckCircle2,
   AlertCircle,
@@ -16,13 +15,10 @@ import {
   Sparkles,
 } from 'lucide-react';
 import {
-  parseSkuMasterFile,
   fetchAndParseSkuMasterFromUrl,
   downloadOfficialSkuMasterTemplate,
-  ParseSkuMasterResult,
 } from '../utils/skuMasterExcel';
 import { SkuMeasurement } from '../types/volumetry';
-import { ManualDataImportPanel } from './ManualDataImportPanel';
 
 interface VolumetrySyncPanelProps {
   onDataLoaded: (newMeasurements: SkuMeasurement[], mode: 'replace' | 'merge') => void;
@@ -48,7 +44,6 @@ export const VolumetrySyncPanel: React.FC<VolumetrySyncPanelProps> = ({
   onTriggerSync,
 }) => {
   const [localUrl, setLocalUrl] = useState(onlineUrl);
-  const [loadMode, setLoadMode] = useState<'replace' | 'merge'>('replace');
   const [feedback, setFeedback] = useState<{
     type: 'success' | 'error' | 'info';
     message: string;
@@ -63,15 +58,6 @@ export const VolumetrySyncPanel: React.FC<VolumetrySyncPanelProps> = ({
       message: 'Enlace a carpeta pública guardado exitosamente.',
       details: 'Ahora puede presionar "Sincronizar en Línea Ahora" para probar la conexión.',
     });
-  };
-
-  const handleImportFile = async (file: File): Promise<string> => {
-    const result: ParseSkuMasterResult = await parseSkuMasterFile(file);
-    if (!result.success || result.measurements.length === 0) {
-      throw new Error(result.errorMessage || 'Verifica que el archivo tenga las columnas de SKU y dimensiones.');
-    }
-    onDataLoaded(result.measurements, loadMode);
-    return `Se procesaron ${result.totalRowsParsed} SKUs en la hoja ${result.sheetName}. Volumen: ${result.totalVolumeM3} m³; conformes: ${result.conformeCount}; discrepancias críticas: ${result.criticalDiscrepanciesCount}.`;
   };
 
   // Quick simulation of new incoming daily SKUs from operations for demonstration
@@ -160,26 +146,6 @@ export const VolumetrySyncPanel: React.FC<VolumetrySyncPanelProps> = ({
     });
   };
 
-  const modeSelector = (
-    <div className="flex items-center gap-2 text-xs">
-      <span className="font-bold text-slate-700">Al cargar:</span>
-      <button
-        type="button"
-        onClick={() => setLoadMode('replace')}
-        className={`px-3 py-1.5 rounded-lg border font-bold ${loadMode === 'replace' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-300'}`}
-      >
-        Reemplazar maestro
-      </button>
-      <button
-        type="button"
-        onClick={() => setLoadMode('merge')}
-        className={`px-3 py-1.5 rounded-lg border font-bold ${loadMode === 'merge' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-300'}`}
-      >
-        Combinar por SKU
-      </button>
-    </div>
-  );
-
   return (
     <div className="space-y-6 text-slate-800">
       {/* HEADER BANNER */}
@@ -255,9 +221,9 @@ export const VolumetrySyncPanel: React.FC<VolumetrySyncPanelProps> = ({
       )}
 
       {/* TWO COLUMNS: 1. ONLINE PUBLIC FOLDER SYNC | 2. MANUAL EXCEL UPLOAD */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div className="grid grid-cols-1 gap-6">
         {/* LEFT: ONLINE PUBLIC FOLDER / URL CONNECTION */}
-        <div className="lg:col-span-7 bg-white border-2 border-slate-200 rounded-2xl p-5 sm:p-6 shadow-sm space-y-5">
+        <div className="bg-white border-2 border-slate-200 rounded-2xl p-5 sm:p-6 shadow-sm space-y-5">
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center border border-blue-200">
@@ -373,19 +339,6 @@ export const VolumetrySyncPanel: React.FC<VolumetrySyncPanelProps> = ({
           </div>
         </div>
 
-        <div className="lg:col-span-5 space-y-3">
-          {modeSelector}
-          <ManualDataImportPanel
-            source="volumetry"
-            title="Carga manual de maestro de SKU"
-            acceptedExtensions={['.xlsx', '.xls', '.xlsm', '.csv']}
-            instructions="Se detectan las hojas MAESTRO y SKU; se validan dimensiones y discrepancias."
-            onImport={handleImportFile}
-          />
-          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-[11px] text-emerald-900">
-            <strong>Validación dimensional:</strong> calcula m³ físicos, m³ WMS y desviaciones sin modificar el archivo original.
-          </div>
-        </div>
       </div>
     </div>
   );

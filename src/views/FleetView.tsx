@@ -31,9 +31,8 @@ import {
 import { ExecutiveObservationsSection } from '../components/ExecutiveObservationsSection';
 import { getObservationsByModule } from '../data/executiveObservationsRegistry';
 import { FleetReceptionUploader } from '../components/FleetReceptionUploader';
-import { FleetExcelSyncModal } from '../components/FleetExcelSyncModal';
-import { DataFreshnessStatus } from '../components/ManualDataImportPanel';
-import { sortMonthsChronologically, getMonthChronologicalIndex } from '../utils/fleetExcel';
+import { DataFreshnessStatus, ManualDataImportPanel } from '../components/ManualDataImportPanel';
+import { parseFleetExcelFile, sortMonthsChronologically, getMonthChronologicalIndex } from '../utils/fleetExcel';
 
 export const FleetView: React.FC = () => {
   const [fleetTab, setFleetTab] = useState<'AUDITORIA' | 'RECEPCION'>('AUDITORIA');
@@ -86,7 +85,6 @@ export const FleetView: React.FC = () => {
   });
 
   const [activeMonth, setActiveMonth] = useState<string>('Setiembre');
-  const [isExcelModalOpen, setIsExcelModalOpen] = useState(false);
   const [lastUploadNotice, setLastUploadNotice] = useState<string | null>(null);
   const [chartFilter, setChartFilter] = useState<'ALL' | 'MONTACARGA' | 'ELEVADOR' | 'EXCESO'>('ALL');
   const [incTypeFilter, setIncTypeFilter] = useState<'ALL' | 'CORRECTIVO' | 'PREVENTIVO'>('ALL');
@@ -112,6 +110,12 @@ export const FleetView: React.FC = () => {
   ) => {
     setEquipos(newEquipos);
     setIncidencias(newIncidencias);
+    try {
+      localStorage.setItem('stol_fleet_equipos_v3', JSON.stringify(newEquipos));
+      localStorage.setItem('stol_fleet_incidencias_v3', JSON.stringify(newIncidencias));
+    } catch (error) {
+      console.warn('Could not persist fleet data:', error);
+    }
     if (detectedMonths && detectedMonths.length > 0) {
       const sorted = sortMonthsChronologically(detectedMonths);
       setAvailableMonths(sorted);
@@ -119,9 +123,12 @@ export const FleetView: React.FC = () => {
         setActiveMonth(sorted[sorted.length - 1] || 'Setiembre');
       }
     }
-    setLastUploadNotice(
-      `¡Formato establecido cargado con éxito! Se sincronizaron ${newEquipos.length} equipos con la columna «Horas usadas» (fórmulas respetadas).`
-    );
+  };
+
+  const handleImportFleetFile = async (file: File): Promise<string> => {
+    const result = await parseFleetExcelFile(file);
+    handleDataUpdated(result.equipos, result.incidencias, result.detectedMonths);
+    return `${result.message} Se cargaron ${result.equipmentCount} equipos y ${result.incidentsCount} incidencias. Hojas: ${result.sheetNames.join(', ')}.`;
   };
 
   const handleResetToDefaults = () => {
@@ -410,16 +417,6 @@ export const FleetView: React.FC = () => {
                 <span className="text-[10.5px] text-slate-300">Oficial Auditoría</span>
               </div>
 
-              {/* Botón principal para subir el formato establecido de flota y horómetros */}
-              <button
-                onClick={() => setIsExcelModalOpen(true)}
-                className="flex items-center gap-1.5 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white px-3.5 py-1.5 rounded-xl text-xs font-black transition-all shadow-md cursor-pointer border border-emerald-400/50"
-                title="Subir mi archivo Excel con el formato establecido de Flota y Horómetros"
-              >
-                <FileSpreadsheet className="w-4 h-4 text-emerald-100" />
-                <span>Subir mi Formato Establecido (.xlsx)</span>
-              </button>
-
               <button
                 onClick={() => window.print()}
                 className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-md cursor-pointer border border-slate-600"
@@ -447,6 +444,22 @@ export const FleetView: React.FC = () => {
           </button>
         </div>
       )}
+
+      <div className="space-y-2">
+        <ManualDataImportPanel
+          source="fleet"
+          title="Actualizar horómetros, flota e incidencias"
+          acceptedExtensions={['.xlsx', '.xls', '.csv']}
+          instructions="Formato DATA_DASHBOARD_EJECUTIVO con hojas de flota y bitácora."
+          onImport={handleImportFleetFile}
+        />
+        <button
+          onClick={handleResetToDefaults}
+          className="text-xs font-semibold text-slate-500 hover:text-rose-700 underline underline-offset-2"
+        >
+          Restablecer datos de demostración
+        </button>
+      </div>
 
       {/* SUB-NAVIGATION TABS */}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-2.5 rounded-2xl border-2 border-slate-200 shadow-sm">
@@ -486,16 +499,6 @@ export const FleetView: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Quick upload format button in sub-navigation */}
-          <button
-            onClick={() => setIsExcelModalOpen(true)}
-            className="flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
-            title="Subir mi archivo Excel con el formato establecido"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Subir mi Formato (.xlsx)</span>
-          </button>
-
           {fleetTab === 'AUDITORIA' ? (
             <button
               onClick={() => {
@@ -826,15 +829,6 @@ export const FleetView: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 w-full md:w-auto shrink-0">
-              <button
-                onClick={() => setIsExcelModalOpen(true)}
-                className="flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-500 to-emerald-400 hover:from-emerald-400 hover:to-emerald-300 text-slate-950 font-black px-5 py-2.5 rounded-xl text-xs transition-all shadow-md cursor-pointer"
-              >
-                <UploadCloud className="w-4 h-4 text-slate-950" />
-                <span>Subir mi Formato Establecido (.xlsx)</span>
-              </button>
-            </div>
           </section>
 
           {/* 2. FLEET PROVIDERS CARDS */}
@@ -1616,15 +1610,6 @@ export const FleetView: React.FC = () => {
         Elevadores (Datos consolidados de Bitácora y Horómetros)
       </footer>
 
-      {/* MODAL PARA SUBIR FORMATO ESTABLECIDO */}
-      <FleetExcelSyncModal
-        isOpen={isExcelModalOpen}
-        onClose={() => setIsExcelModalOpen(false)}
-        currentEquipos={equipos}
-        currentIncidencias={incidencias}
-        onDataUpdated={handleDataUpdated}
-        onResetToDefaults={handleResetToDefaults}
-      />
     </div>
   );
 };

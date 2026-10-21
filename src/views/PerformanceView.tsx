@@ -23,7 +23,7 @@ import { StolLogo } from '../components/StolLogo';
 import { SupervisorLowGradesDiagnostic } from '../components/SupervisorLowGradesDiagnostic';
 import { ExecutiveObservationsSection } from '../components/ExecutiveObservationsSection';
 import { getObservationsByModule } from '../data/executiveObservationsRegistry';
-import { DataFreshnessStatus } from '../components/ManualDataImportPanel';
+import { DataFreshnessStatus, ManualDataImportPanel } from '../components/ManualDataImportPanel';
 
 import {
   Users,
@@ -103,6 +103,26 @@ export const PerformanceView: React.FC = () => {
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  const handleImportPerformanceFile = async (file: File): Promise<string> => {
+    let parsed: any;
+    try {
+      parsed = JSON.parse(await file.text());
+    } catch {
+      throw new Error('El archivo no contiene un respaldo JSON válido.');
+    }
+    if (!Array.isArray(parsed.supervisors)) {
+      throw new Error('El JSON no contiene una lista válida de supervisores.');
+    }
+    setSupervisors(parsed.supervisors);
+    setWeeklies(parsed.weeklies || weeklies);
+    setObservations(parsed.observations || observations);
+    setQuarterly(parsed.quarterly || quarterly);
+    if (parsed.config) setConfig((prev) => ({ ...prev, ...parsed.config }));
+    const message = `Se importó el respaldo de ${parsed.supervisors.length} supervisores.`;
+    showToast(message);
+    return message;
   };
 
   const handleRefreshData = () => {
@@ -288,6 +308,14 @@ export const PerformanceView: React.FC = () => {
           <span>{toastMessage}</span>
         </div>
       )}
+
+      <ManualDataImportPanel
+        source="performance"
+        title="Cargar respaldo de evaluación de Supervisores"
+        acceptedExtensions={['.json']}
+        instructions="Usa un respaldo JSON exportado desde Administrar Datos."
+        onImport={handleImportPerformanceFile}
+      />
 
       {/* 1. ENCABEZADO PRINCIPAL DE LA PESTAÑA */}
       <header className="bg-white border-2 border-slate-300 rounded-2xl p-5 shadow-sm space-y-4">
@@ -1287,14 +1315,6 @@ export const PerformanceView: React.FC = () => {
         weeklies={weeklies}
         observations={observations}
         quarterly={quarterly}
-        onImportData={(payload) => {
-          setSupervisors(payload.supervisors);
-          setWeeklies(payload.weeklies);
-          setObservations(payload.observations);
-          setQuarterly(payload.quarterly);
-          if (payload.config) setConfig((prev) => ({ ...prev, ...payload.config }));
-          showToast('Datos cargados correctamente.');
-        }}
         onResetDefaults={() => {
           setConfig(INITIAL_CONFIG);
           setSupervisors(INITIAL_SUPERVISORS);
