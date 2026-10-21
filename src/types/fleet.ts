@@ -65,6 +65,7 @@ export type ReceptionPhotoCategory =
   | 'OPERACION_CAMPO';
 
 export type ReceptionStatus = 'CONFORME' | 'OBSERVADO' | 'CONDICIONADO';
+export type ReceptionRecordType = 'RECEPCION' | 'INCIDENCIA';
 
 export interface EquipmentReceptionPhoto {
   id: string;
@@ -72,6 +73,7 @@ export interface EquipmentReceptionPhoto {
   provider: EquipmentProvider;
   equipmentType: EquipmentType;
   date: string;
+  recordType?: ReceptionRecordType;
   category: ReceptionPhotoCategory;
   title: string;
   initialHorometer?: number;

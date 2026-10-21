@@ -5,6 +5,7 @@ import {
   ReceptionStatus,
   EquipmentProvider,
   EquipmentType,
+  ReceptionRecordType,
 } from '../types/fleet';
 import { FLEET_EQUIPOS } from '../data/initialFleetData';
 import { INITIAL_RECEPTION_PHOTOS } from '../data/initialReceptionData';
@@ -37,12 +38,17 @@ import {
   Play,
   PlayCircle,
   Film,
+  Pencil,
 } from 'lucide-react';
 
 export const RECEPTION_PHOTOS_STORAGE_KEY = 'stol_fleet_reception_photos';
 const STORAGE_KEY = RECEPTION_PHOTOS_STORAGE_KEY;
 const RECEPTION_DATABASE = 'stol-fleet-reception';
 const RECEPTION_STORE = 'photos';
+
+const getReceptionRecordType = (photo: EquipmentReceptionPhoto): ReceptionRecordType =>
+  photo.recordType ||
+  (photo.category === 'VIDEO_INCIDENCIA' || photo.category === 'OPERACION_CAMPO' ? 'INCIDENCIA' : 'RECEPCION');
 
 interface StoredReceptionPhoto {
   photo: EquipmentReceptionPhoto;
@@ -286,14 +292,20 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
         if (storedPhotos) {
           const mediaBlobs = new Map<string, Blob>();
           const restoredPhotos = storedPhotos.map(({ photo, mediaBlob }) => {
-            if (!mediaBlob) return photo;
+            const recordType = getReceptionRecordType(photo);
+            if (!mediaBlob) return { ...photo, recordType };
             mediaBlobs.set(photo.id, mediaBlob);
-            return { ...photo, imageUrl: URL.createObjectURL(mediaBlob) };
+            return { ...photo, recordType, imageUrl: URL.createObjectURL(mediaBlob) };
           });
           mediaBlobsRef.current = mediaBlobs;
           if (isMounted) setPhotos(restoredPhotos);
         } else {
-          await writeStoredReceptionPhotos(initialPhotosRef.current, mediaBlobsRef.current);
+          const migratedPhotos = initialPhotosRef.current.map((photo) => ({
+            ...photo,
+            recordType: getReceptionRecordType(photo),
+          }));
+          await writeStoredReceptionPhotos(migratedPhotos, mediaBlobsRef.current);
+          if (isMounted) setPhotos(migratedPhotos);
           localStorage.removeItem(STORAGE_KEY);
         }
       } catch (error) {
@@ -320,8 +332,13 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [mediaTypeFilter, setMediaTypeFilter] = useState<'ALL' | 'IMAGE' | 'VIDEO'>('ALL');
+  const [recordTypeFilter, setRecordTypeFilter] = useState<ReceptionRecordType>('RECEPCION');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [successToast, setSuccessToast] = useState<string | null>(null);
+  const [editingPhoto, setEditingPhoto] = useState<EquipmentReceptionPhoto | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   // Sync external filter if prop changes
   useEffect(() => {
@@ -343,6 +360,7 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
 
   // New photo form state
   const [newEquipCode, setNewEquipCode] = useState<string>(selectedEquipmentCode || 'NOVATRANS 290');
+  const [newRecordType, setNewRecordType] = useState<ReceptionRecordType>('RECEPCION');
   const [newCategory, setNewCategory] = useState<ReceptionPhotoCategory>('HOROMETRO');
   const [newTitle, setNewTitle] = useState<string>('');
   const [newHorometer, setNewHorometer] = useState<string>('');
@@ -398,6 +416,7 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
             duration: vRes.duration,
           });
           setNewCategory('VIDEO_INCIDENCIA');
+          setNewRecordType('INCIDENCIA');
           if (!newTitle) {
             const cleanName = file.name.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ');
             setNewTitle(`Video Incidencia: ${cleanName}`);
@@ -466,6 +485,7 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
       provider,
       equipmentType: equipType,
       date: newDate,
+      recordType: newRecordType,
       category: newCategory,
       title: newTitle || (staged.mediaType === 'VIDEO' ? `Video Incidencia ${newEquipCode}` : `Recepción Técnica ${newEquipCode}`),
       initialHorometer: newHorometer ? parseFloat(newHorometer) : undefined,
@@ -503,6 +523,7 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
 
     // Automatically align equipment filter to newly uploaded unit so user immediately sees their upload
     setEquipmentFilter(newEquipCode);
+    setRecordTypeFilter(newRecordType);
     setSuccessToast(`¡Expediente guardado con éxito! Se registraron ${newPhotosCreated.length} archivo(s) para el equipo ${newEquipCode}.`);
     setTimeout(() => setSuccessToast(null), 6000);
 
@@ -511,7 +532,37 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
     setNewTitle('');
     setNewHorometer('');
     setNewNotes('');
+    setNewRecordType('RECEPCION');
+    setNewCategory('HOROMETRO');
     setIsUploadModalOpen(false);
+  };
+
+  const openEditPhoto = (photo: EquipmentReceptionPhoto) => {
+    setEditingPhoto(photo);
+    setEditTitle(photo.title);
+    setEditNotes(photo.notes || '');
+  };
+
+  const handleSavePhotoDetails = async () => {
+    if (!editingPhoto || isSavingEdit) return;
+    setIsSavingEdit(true);
+    const updatedPhotos = photos.map((photo) =>
+      photo.id === editingPhoto.id
+        ? { ...photo, title: editTitle.trim() || photo.title, notes: editNotes.trim() }
+        : photo
+    );
+    try {
+      await writeStoredReceptionPhotos(updatedPhotos, mediaBlobsRef.current);
+      setPhotos(updatedPhotos);
+      setEditingPhoto(null);
+      setSuccessToast('Se actualizaron el título y la descripción de la evidencia.');
+      setTimeout(() => setSuccessToast(null), 4000);
+    } catch (error) {
+      console.error('Could not update fleet reception details:', error);
+      alert('No se pudieron guardar los cambios. La evidencia conserva su descripción anterior.');
+    } finally {
+      setIsSavingEdit(false);
+    }
   };
 
   // Delete photo or video
@@ -559,6 +610,7 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
   // Filtered photos & videos
   const filteredPhotos = useMemo(() => {
     return photos.filter((p) => {
+      if (getReceptionRecordType(p) !== recordTypeFilter) return false;
       if (equipmentFilter !== 'ALL' && p.equipmentCode !== equipmentFilter) return false;
       if (providerFilter !== 'ALL' && p.provider !== providerFilter) return false;
       if (categoryFilter !== 'ALL' && p.category !== categoryFilter) return false;
@@ -578,7 +630,7 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
       }
       return true;
     });
-  }, [photos, equipmentFilter, providerFilter, categoryFilter, statusFilter, mediaTypeFilter, searchTerm]);
+  }, [photos, recordTypeFilter, equipmentFilter, providerFilter, categoryFilter, statusFilter, mediaTypeFilter, searchTerm]);
 
   // Statistics for Directorio
   const stats = useMemo(() => {
@@ -588,8 +640,10 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
     const observados = photos.filter((p) => p.status === 'OBSERVADO' || p.status === 'CONDICIONADO').length;
     const horometrosCert = photos.filter((p) => p.category === 'HOROMETRO' && p.initialHorometer !== undefined).length;
     const totalVideos = photos.filter((p) => p.mediaType === 'VIDEO').length;
+    const receptionCount = photos.filter((p) => getReceptionRecordType(p) === 'RECEPCION').length;
+    const incidenceCount = photos.filter((p) => getReceptionRecordType(p) === 'INCIDENCIA').length;
 
-    return { totalCount, uniqueEquipments, conformes, observados, horometrosCert, totalVideos };
+    return { totalCount, uniqueEquipments, conformes, observados, horometrosCert, totalVideos, receptionCount, incidenceCount };
   }, [photos]);
 
   // Current lightbox photo
@@ -735,6 +789,30 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
 
       {/* 3. FILTERS & SEARCH TOOLBAR */}
       <div className="bg-white border-2 border-slate-200 rounded-2xl p-4 shadow-sm space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+          <div>
+            <h3 className="text-xs font-black uppercase text-slate-800">Expedientes de flota</h3>
+            <p className="text-[11px] text-slate-500 mt-0.5">Recepción e incidencias se consultan por separado.</p>
+          </div>
+          <div className="inline-flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold">
+            <button
+              onClick={() => setRecordTypeFilter('RECEPCION')}
+              className={`px-3 py-2 rounded-lg transition-colors cursor-pointer ${
+                recordTypeFilter === 'RECEPCION' ? 'bg-blue-700 text-white shadow-sm' : 'text-slate-600 hover:text-blue-800'
+              }`}
+            >
+              <span className="inline-flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" /> Recepción ({stats.receptionCount})</span>
+            </button>
+            <button
+              onClick={() => setRecordTypeFilter('INCIDENCIA')}
+              className={`px-3 py-2 rounded-lg transition-colors cursor-pointer ${
+                recordTypeFilter === 'INCIDENCIA' ? 'bg-rose-700 text-white shadow-sm' : 'text-slate-600 hover:text-rose-800'
+              }`}
+            >
+              <span className="inline-flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" /> Incidencias ({stats.incidenceCount})</span>
+            </button>
+          </div>
+        </div>
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
           {/* Search */}
           <div className="relative flex-1">
@@ -910,13 +988,15 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
             <Camera className="w-8 h-8" />
           </div>
           <div className="max-w-md mx-auto">
-            <h3 className="text-base font-black text-slate-900">No se encontraron fotografías de recepción</h3>
+            <h3 className="text-base font-black text-slate-900">
+              {recordTypeFilter === 'RECEPCION' ? 'No hay evidencias de recepción' : 'No hay evidencias de incidencias'}
+            </h3>
             <p className="text-xs text-slate-500 mt-1">
-              No hay fotos que coincidan con los filtros aplicados o aún no has cargado imágenes para este equipo.
+              No hay archivos que coincidan con los filtros aplicados en este expediente.
             </p>
           </div>
           <button
-            onClick={() => setIsUploadModalOpen(true)}
+            onClick={() => openUploadModal()}
             className="inline-flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer shadow-md"
           >
             <Plus className="w-4 h-4 text-amber-400" />
@@ -924,7 +1004,18 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+        <div className="space-y-4">
+          <div className={`border-l-4 pl-4 py-1 ${recordTypeFilter === 'RECEPCION' ? 'border-blue-600' : 'border-rose-600'}`}>
+            <h3 className={`text-sm font-black ${recordTypeFilter === 'RECEPCION' ? 'text-blue-950' : 'text-rose-950'}`}>
+              {recordTypeFilter === 'RECEPCION' ? 'Recepción técnica' : 'Incidencias de equipos'}
+            </h3>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              {filteredPhotos.length} evidencia(s) · {recordTypeFilter === 'RECEPCION'
+                ? 'horómetros, condición de ingreso y documentación de entrega'
+                : 'fallas, daños y evidencia audiovisual de operación'}
+            </p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
           {filteredPhotos.map((photo, index) => {
             const catInfo = CATEGORY_LABELS[photo.category] || CATEGORY_LABELS.CARROCERIA;
             const statusInfo = STATUS_CONFIG[photo.status] || STATUS_CONFIG.CONFORME;
@@ -1089,6 +1180,18 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
                   </button>
 
                   <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openEditPhoto(photo);
+                    }}
+                    className="p-1.5 text-slate-500 hover:text-blue-700 hover:bg-white rounded-lg border border-transparent hover:border-slate-200 transition-all text-xs font-bold flex items-center gap-1"
+                    title="Editar título y descripción"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                    <span>Editar</span>
+                  </button>
+
+                  <button
                     onClick={(e) => handleDeletePhoto(photo.id, e)}
                     className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
                     title="Eliminar de expediente"
@@ -1099,6 +1202,7 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
               </div>
             );
           })}
+          </div>
         </div>
       )}
 
@@ -1225,6 +1329,30 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
               )}
 
               {/* Form fields */}
+                <div>
+                  <label className="block text-xs font-black text-slate-700 mb-1.5">Guardar evidencia en *</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setNewRecordType('RECEPCION')}
+                      className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border text-xs font-bold transition-colors cursor-pointer ${
+                        newRecordType === 'RECEPCION' ? 'bg-blue-700 border-blue-700 text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-blue-400'
+                      }`}
+                    >
+                      <ShieldCheck className="w-4 h-4" /> Recepción técnica
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewRecordType('INCIDENCIA')}
+                      className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border text-xs font-bold transition-colors cursor-pointer ${
+                        newRecordType === 'INCIDENCIA' ? 'bg-rose-700 border-rose-700 text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-rose-400'
+                      }`}
+                    >
+                      <AlertTriangle className="w-4 h-4" /> Incidencia de equipo
+                    </button>
+                  </div>
+                </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
                 {/* Equipment code */}
                 <div>
@@ -1361,6 +1489,65 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
         </div>
       )}
 
+      {editingPhoto && (
+        <div className="fixed inset-0 z-[60] bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between gap-4 px-5 py-4 border-b border-slate-200">
+              <div>
+                <h3 className="text-sm font-black text-slate-900">Editar descripción de evidencia</h3>
+                <p className="text-xs text-slate-500 mt-0.5">{editingPhoto.equipmentCode} · {editingPhoto.date}</p>
+              </div>
+              <button
+                onClick={() => setEditingPhoto(null)}
+                className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 cursor-pointer"
+                title="Cerrar"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5" htmlFor="edit-evidence-title">Título</label>
+                <input
+                  id="edit-evidence-title"
+                  value={editTitle}
+                  onChange={(event) => setEditTitle(event.target.value)}
+                  className="w-full px-3 py-2.5 rounded-lg border border-slate-300 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5" htmlFor="edit-evidence-notes">Descripción / observaciones</label>
+                <textarea
+                  id="edit-evidence-notes"
+                  rows={5}
+                  value={editNotes}
+                  onChange={(event) => setEditNotes(event.target.value)}
+                  placeholder="Describe lo observado en la fotografía o el video..."
+                  className="w-full px-3 py-2.5 rounded-lg border border-slate-300 text-sm text-slate-900 resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-4 bg-slate-50 border-t border-slate-200">
+              <button
+                onClick={() => setEditingPhoto(null)}
+                disabled={isSavingEdit}
+                className="px-4 py-2 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-200 disabled:opacity-50 cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSavePhotoDetails}
+                disabled={isSavingEdit}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold disabled:opacity-50 cursor-pointer"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                {isSavingEdit ? 'Guardando...' : 'Guardar cambios'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 6. FULL-SCREEN LIGHTBOX MODAL */}
       {currentLightboxPhoto && lightboxPhotoIndex !== null && (
         <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col justify-between p-3 md:p-6 select-none animate-in fade-in duration-200">
@@ -1414,6 +1601,16 @@ export const FleetReceptionUploader: React.FC<FleetReceptionUploaderProps> = ({
                 <span className="hidden sm:inline">
                   {currentLightboxPhoto.mediaType === 'VIDEO' ? 'Bajar Video' : 'Descargar'}
                 </span>
+              </button>
+              <button
+                onClick={() => {
+                  openEditPhoto(currentLightboxPhoto);
+                  setLightboxPhotoIndex(null);
+                }}
+                className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
+                title="Editar título y descripción"
+              >
+                <Pencil className="w-4 h-4" />
               </button>
               <button
                 onClick={() => setLightboxPhotoIndex(null)}
