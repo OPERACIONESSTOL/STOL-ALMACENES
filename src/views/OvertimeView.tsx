@@ -12,6 +12,7 @@ import { OvertimeCharts } from '../components/OvertimeCharts';
 import { OvertimeMatrix } from '../components/OvertimeMatrix';
 import { ExecutiveObservationsSection } from '../components/ExecutiveObservationsSection';
 import { getObservationsByModule } from '../data/executiveObservationsRegistry';
+import { ManualDataImportPanel } from '../components/ManualDataImportPanel';
 import {
   Clock,
   Calendar,
