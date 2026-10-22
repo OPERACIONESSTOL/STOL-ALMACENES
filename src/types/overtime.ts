@@ -11,6 +11,9 @@ export interface BonusRecord {
   a: string; // Area
   c: string; // Cargo
   d: number; // Dias trabajados bono
+  del?: number; // Excel serial date DEL
+  al?: number;  // Excel serial date AL
+  f?: number;   // Main date serial
 }
 
 export interface OvertimeDataset {

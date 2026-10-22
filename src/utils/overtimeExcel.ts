@@ -13,8 +13,12 @@ export const normalizeString = (s: unknown): string => {
 export const excelSerialToIso = (n: number): string => {
   if (!n || isNaN(n)) return '';
   try {
-    const d = new Date(Math.round((n - 25569) * 864e5));
-    return d.toISOString().slice(0, 10);
+    const utcMs = Math.round((n - 25569) * 864e5);
+    const d = new Date(utcMs);
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(d.getUTCDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
   } catch {
     return '';
   }
@@ -22,15 +26,44 @@ export const excelSerialToIso = (n: number): string => {
 
 export const isoToExcelSerial = (isoDate: string): number => {
   if (!isoDate) return 0;
-  const ms = Date.parse(isoDate);
-  if (isNaN(ms)) return 0;
-  return Math.floor(ms / 864e5 + 25569);
+  const parts = isoDate.split('-');
+  if (parts.length === 3) {
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const d = parseInt(parts[2], 10);
+    if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+      return Math.round(Date.UTC(y, m, d) / 864e5 + 25569);
+    }
+  }
+  return 0;
 };
 
+/**
+ * Formats decimal hours (e.g., 14128.6327) into exact HH:MM:SS or HH:MM format matching Google Sheets.
+ */
 export const formatHours = (v: number): string => {
+  if (!v || isNaN(v) || v <= 0) return '0:00';
+  const totalSeconds = Math.round(v * 3600);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const hoursFormatted = hours.toLocaleString('es-PE');
+  const minsStr = String(minutes).padStart(2, '0');
+  const secsStr = String(seconds).padStart(2, '0');
+
+  if (seconds > 0) {
+    return `${hoursFormatted}:${minsStr}:${secsStr}`;
+  }
+  return `${hoursFormatted}:${minsStr}`;
+};
+
+/**
+ * Formats decimal hours with 2 decimal places precision (e.g. "193.53")
+ */
+export const formatHoursDecimal = (v: number): string => {
   return (v || 0).toLocaleString('es-PE', {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   });
 };
 

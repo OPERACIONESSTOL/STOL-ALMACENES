@@ -1,10 +1,11 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import initialDataJson from '../data/initialOvertimeData.json';
 import { OvertimeRecord, BonusRecord, OvertimeDataset, OvertimeFilterState } from '../types/overtime';
 import {
   excelSerialToIso,
   isoToExcelSerial,
   formatHours,
+  formatHoursDecimal,
   parseOvertimeWorkbook,
   exportOvertimeToExcel,
 } from '../utils/overtimeExcel';
@@ -45,6 +46,7 @@ import {
   syncOvertimeFromGoogleSheets,
   GoogleSheetsConfig,
 } from '../services/googleSheetsService';
+import { recordGoogleSheetsSyncFreshness } from '../components/ManualDataImportPanel';
 
 const INITIAL_DATA: OvertimeDataset = initialDataJson as unknown as OvertimeDataset;
 const OVERTIME_STORAGE_KEY = 'stol_overtime_dataset_v1';
@@ -67,7 +69,10 @@ interface OvertimeViewProps {
   onSelectMonth: (month: string) => void;
 }
 
+import { useRole } from '../context/RoleContext';
+
 export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSelectMonth }) => {
+  const { setLastOperationFeed } = useRole();
   const [dataset, setDataset] = useState<OvertimeDataset>(loadOvertimeDataset);
   const [sourceName, setSourceName] = useState<string>(() => {
     try {
@@ -114,19 +119,33 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
     const monthRecords = dataset.hh.filter(
       (record) => getReportMonthFromDate(excelSerialToIso(record.f)) === selectedMonth
     );
-    if (!monthRecords.length) return { min: '', max: '' };
-    const dates = monthRecords.map((record) => excelSerialToIso(record.f));
-    return { min: dates.sort()[0], max: dates.sort()[dates.length - 1] };
+    if (!monthRecords.length) return initialDateRange;
+    const dates = monthRecords.map((record) => excelSerialToIso(record.f)).filter(Boolean);
+    if (!dates.length) return initialDateRange;
+    dates.sort();
+    return { min: dates[0], max: dates[dates.length - 1] };
   }, [dataset, selectedMonth, initialDateRange]);
 
+  const activeMonthRef = React.useRef(selectedMonth);
   useEffect(() => {
-    setFilters((previous) => ({
-      ...previous,
-      startDate: selectedMonthRange.min,
-      endDate: selectedMonthRange.max,
-    }));
-    setCurrentPage(1);
-  }, [selectedMonth, selectedMonthRange]);
+    if (activeMonthRef.current !== selectedMonth) {
+      activeMonthRef.current = selectedMonth;
+      if (selectedMonth === 'Todos') {
+        setFilters((prev) => ({
+          ...prev,
+          startDate: initialDateRange.min,
+          endDate: initialDateRange.max,
+        }));
+      } else {
+        setFilters((prev) => ({
+          ...prev,
+          startDate: selectedMonthRange.min,
+          endDate: selectedMonthRange.max,
+        }));
+      }
+      setCurrentPage(1);
+    }
+  }, [selectedMonth, selectedMonthRange, initialDateRange]);
 
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 20;
@@ -162,8 +181,7 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
     const endSerial = filters.endDate ? isoToExcelSerial(filters.endDate) : Infinity;
 
     return dataset.hh.filter((r) => {
-      if (selectedMonth !== 'Todos' && getReportMonthFromDate(excelSerialToIso(r.f)) !== selectedMonth) return false;
-      // Date range
+      // Date range filtering
       if (r.f < startSerial || r.f > endSerial) return false;
 
       // Area
@@ -193,6 +211,128 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
     });
   }, [dataset, filters]);
 
+  // Filter bonus records according to selected date range, area, cargo, AND search query
+  const filteredBono = useMemo(() => {
+    const startSerial = filters.startDate ? isoToExcelSerial(filters.startDate) : -Infinity;
+    const endSerial = filters.endDate ? isoToExcelSerial(filters.endDate) : Infinity;
+    const q = filters.searchQuery.trim().toLowerCase();
+
+    // Map total HHEE records per area+cargo across full dataset vs filtered date range
+    const totalHhByPair: Record<string, number> = {};
+    dataset.hh.forEach((r) => {
+      const key = `${r.a}___${r.c}`;
+      totalHhByPair[key] = (totalHhByPair[key] || 0) + 1;
+    });
+
+    const filteredHhByPair: Record<string, number> = {};
+    dataset.hh.forEach((r) => {
+      if (r.f >= startSerial && r.f <= endSerial) {
+        const key = `${r.a}___${r.c}`;
+        filteredHhByPair[key] = (filteredHhByPair[key] || 0) + 1;
+      }
+    });
+
+    const isFullDateRange = filteredRecords.length === dataset.hh.length;
+    const result: BonusRecord[] = [];
+
+    dataset.bo.forEach((b) => {
+      // Area filter
+      if (filters.selectedArea !== 'TODAS' && b.a !== filters.selectedArea) return;
+
+      // Cargo filter
+      if (filters.selectedCargo !== 'TODOS' && b.c !== filters.selectedCargo) return;
+
+      // Search query filter (checks Area or Cargo matches in Bono)
+      if (q) {
+        const areaMatch = b.a.toLowerCase().includes(q);
+        const cargoMatch = b.c.toLowerCase().includes(q);
+        if (!areaMatch && !cargoMatch) return;
+      }
+
+      // Date range filter
+      const bStart = b.del || b.f;
+      const bEnd = b.al || b.f;
+
+      if (bStart || bEnd) {
+        const start = bStart ?? -Infinity;
+        const end = bEnd ?? Infinity;
+        if (end >= startSerial && start <= endSerial) {
+          result.push(b);
+        }
+      } else {
+        if (isFullDateRange) {
+          result.push(b);
+        } else {
+          const key = `${b.a}___${b.c}`;
+          const tot = totalHhByPair[key] || 0;
+          const filt = filteredHhByPair[key] || 0;
+          if (tot > 0 && filt > 0) {
+            const ratio = filt / tot;
+            result.push({
+              ...b,
+              d: Math.round(b.d * ratio * 10) / 10,
+            });
+          }
+        }
+      }
+    });
+
+    return result;
+  }, [dataset.bo, dataset.hh, filters, filteredRecords]);
+
+  // Predictive search suggestions
+  const searchContainerRef = useRef<HTMLDivElement | null>(null);
+  const [showSuggestions, setShowSuggestions] = useState<boolean>(false);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(event.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const searchSuggestions = useMemo(() => {
+    const q = filters.searchQuery.trim().toLowerCase();
+    if (!q) return [];
+
+    const results: { text: string; type: 'Cargo' | 'Área' | 'Semana' | 'Tipo' }[] = [];
+
+    // Search in Cargos
+    allCargos.forEach((c) => {
+      if (c.toLowerCase().includes(q)) {
+        results.push({ text: c, type: 'Cargo' });
+      }
+    });
+
+    // Search in Areas
+    allAreas.forEach((a) => {
+      if (a.toLowerCase().includes(q) && !results.some((r) => r.text === a)) {
+        results.push({ text: a, type: 'Área' });
+      }
+    });
+
+    // Search in Weeks
+    allWeeks.forEach((w) => {
+      const label = `Semana ${w}`;
+      if ((`sem ${w}`.includes(q) || `semana ${w}`.includes(q) || String(w) === q) && !results.some((r) => r.text === label)) {
+        results.push({ text: label, type: 'Semana' });
+      }
+    });
+
+    // Search in Special Types
+    if ('dominical'.includes(q) || 'feriado'.includes(q)) {
+      results.push({ text: 'Dominical / Feriado', type: 'Tipo' });
+    }
+    if ('ordinaria'.includes(q) || 'regular'.includes(q)) {
+      results.push({ text: 'Ordinarias', type: 'Tipo' });
+    }
+
+    return results.slice(0, 8);
+  }, [filters.searchQuery, allCargos, allAreas, allWeeks]);
+
   // KPIs
   const { totalHours, regularHours, specialHours, totalRecords, totalBonoDays } = useMemo(() => {
     let totH = 0;
@@ -202,15 +342,6 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
       if (r.x === 1) specH += r.h;
     });
     const regH = totH - specH;
-
-    // Filter bonus records according to selected area/cargo
-    let filteredBono = dataset.bo;
-    if (filters.selectedArea !== 'TODAS') {
-      filteredBono = filteredBono.filter((b) => b.a === filters.selectedArea);
-    }
-    if (filters.selectedCargo !== 'TODOS') {
-      filteredBono = filteredBono.filter((b) => b.c === filters.selectedCargo);
-    }
     const bonoDays = filteredBono.reduce((s, b) => s + b.d, 0);
 
     return {
@@ -220,7 +351,7 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
       totalRecords: filteredRecords.length,
       totalBonoDays: bonoDays,
     };
-  }, [filteredRecords, dataset.bo, filters.selectedArea, filters.selectedCargo]);
+  }, [filteredRecords, filteredBono]);
 
   // Pagination for table
   const totalPages = Math.ceil(filteredRecords.length / pageSize) || 1;
@@ -246,12 +377,12 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
   const [autoRefreshSecs, setAutoRefreshSecs] = useState<number>(sheetsConfig.autoRefreshIntervalSeconds || 60);
   const [autoRefreshActive, setAutoRefreshActive] = useState<boolean>(sheetsConfig.autoRefreshEnabled || false);
 
-  const handleSyncGoogleSheets = async (urlToUse?: string, tabToUse?: string) => {
+  const handleSyncGoogleSheets = async (urlToUse?: string, tabToUse?: string, isSilent: boolean = false) => {
     const targetUrl = urlToUse !== undefined ? urlToUse : sheetsConfig.sheetUrl;
     const targetTab = tabToUse !== undefined ? tabToUse : (sheetsConfig.sheetTab || 'HHEE');
 
     if (!targetUrl || !targetUrl.trim()) {
-      setShowSheetsConfigModal(true);
+      if (!isSilent) setShowSheetsConfigModal(true);
       return;
     }
 
@@ -262,45 +393,54 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
       const res = await syncOvertimeFromGoogleSheets(targetUrl, targetTab);
       if (res.success && res.data && res.data.hh && res.data.hh.length > 0) {
         setDataset(res.data);
+        recordGoogleSheetsSyncFreshness('overtime', targetTab || 'HHEE');
         const src = `Google Sheets (${targetTab || 'HHEE'})`;
         setSourceName(src);
         setLastSyncTime(res.timestamp);
+        setLastOperationFeed(res.timestamp);
         try {
           localStorage.setItem('stol_overtime_last_sheets_sync', res.timestamp);
           localStorage.setItem('stol_overtime_source_name', src);
         } catch (e) {}
 
-        const dates = res.data.hh.map((r) => r.f).filter((f) => typeof f === 'number' && !isNaN(f));
+        const dates = res.data.hh.map((r) => r.f).filter((f) => typeof f === 'number' && !isNaN(f) && f > 0);
         if (dates.length > 0) {
           const minD = excelSerialToIso(Math.min(...dates));
           const maxD = excelSerialToIso(Math.max(...dates));
-          setFilters((prev) => ({ ...prev, startDate: minD, endDate: maxD }));
+
+          setFilters((prev) => ({
+            ...prev,
+            startDate: prev.startDate || minD,
+            endDate: prev.endDate || maxD,
+          }));
         }
         setCurrentPage(1);
-        showToast(
-          `Sincronización exitosa: ${res.data.hh.length.toLocaleString('es-PE')} filas HHEE actualizadas.`,
-          'success'
-        );
+        if (!isSilent) {
+          showToast(
+            `Sincronización exitosa: ${res.data.hh.length.toLocaleString('es-PE')} filas HHEE y ${res.data.bo.length.toLocaleString('es-PE')} registros de bonos actualizados.`,
+            'success'
+          );
+        }
       } else {
         const errorMsg = res.error || 'No se obtuvieron registros válidos de la hoja.';
         setSyncError(errorMsg);
-        showToast(`Error al sincronizar: ${errorMsg}`, 'error');
+        if (!isSilent) showToast(`Error al sincronizar: ${errorMsg}`, 'error');
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setSyncError(msg);
-      showToast(`Error de conexión: ${msg}`, 'error');
+      if (!isSilent) showToast(`Error de conexión: ${msg}`, 'error');
     } finally {
       setIsSyncingSheets(false);
     }
   };
 
-  // Auto-refresh interval
+  // Auto-refresh interval (runs silently without intrusive toast popups)
   useEffect(() => {
     if (!autoRefreshActive || !sheetsConfig.sheetUrl) return;
     const intervalMs = (autoRefreshSecs || 60) * 1000;
     const timer = setInterval(() => {
-      handleSyncGoogleSheets(sheetsConfig.sheetUrl, sheetsConfig.sheetTab);
+      handleSyncGoogleSheets(sheetsConfig.sheetUrl, sheetsConfig.sheetTab, true);
     }, intervalMs);
     return () => clearInterval(timer);
   }, [autoRefreshActive, sheetsConfig.sheetUrl, sheetsConfig.sheetTab, autoRefreshSecs]);
@@ -431,58 +571,11 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
           </div>
         </div>
 
-        {/* Global Date Range inputs */}
-        <div className="mt-5 pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-            <span className="font-semibold text-slate-600 flex items-center gap-1.5">
-              <Calendar className="w-3.5 h-3.5 text-blue-600" />
-              Rango de Fecha:
-            </span>
-            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1">
-              <span className="text-slate-400">Del</span>
-              <input
-                type="date"
-                value={filters.startDate}
-                onChange={(e) => {
-                  setFilters({ ...filters, startDate: e.target.value });
-                  setCurrentPage(1);
-                }}
-                className="bg-transparent font-semibold text-slate-800 text-xs focus:outline-none cursor-pointer"
-              />
-            </div>
-
-            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1">
-              <span className="text-slate-400">al</span>
-              <input
-                type="date"
-                value={filters.endDate}
-                onChange={(e) => {
-                  setFilters({ ...filters, endDate: e.target.value });
-                  setCurrentPage(1);
-                }}
-                className="bg-transparent font-semibold text-slate-800 text-xs focus:outline-none cursor-pointer"
-              />
-            </div>
-
-            {(filters.startDate !== initialDateRange.min || filters.endDate !== initialDateRange.max) && (
-              <button
-                onClick={() =>
-                  setFilters((prev) => ({
-                    ...prev,
-                    startDate: initialDateRange.min,
-                    endDate: initialDateRange.max,
-                  }))
-                }
-                className="text-[11px] text-blue-600 hover:underline cursor-pointer"
-              >
-                Restablecer fechas
-              </button>
-            )}
-          </div>
-
+        {/* Connection status line */}
+        <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
           <div className="text-slate-500 text-[11px] font-medium flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span>Conexión en línea vía Google Sheets (solo lectura)</span>
+            <span>Conexión en línea vía Google Sheets (solo lectura) · Última sincronización: {lastSyncTime || 'N/A'}</span>
           </div>
         </div>
       </div>
@@ -554,14 +647,6 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
               <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
               <span>Configurar Enlace Sheets</span>
             </button>
-
-            <button
-              onClick={handleResetToDefaults}
-              className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
-              title="Restablecer datos oficiales STOL de HHEE"
-            >
-              <RotateCcw className="w-4 h-4" />
-            </button>
           </div>
         </div>
 
@@ -586,6 +671,268 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
         )}
       </div>
 
+      {/* Interactive Filter Bar (OPCIONES DE FILTRO AVANZADO) - Positioned above KPIs */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3.5 pb-3 border-b border-slate-100">
+          <div className="flex items-center gap-2">
+            <Filter className="w-4 h-4 text-blue-600" />
+            <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+              Opciones de Filtro Avanzado
+            </h3>
+            <span className="text-[11px] text-slate-400 font-medium">
+              ({filteredRecords.length.toLocaleString('es-PE')} registros filtrados)
+            </span>
+          </div>
+
+          <button
+            onClick={handleResetFilters}
+            className="flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-blue-600 cursor-pointer transition-colors"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Restablecer Filtros</span>
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3">
+          {/* Filter 1: Rango de Fecha (Del / al) */}
+          <div className="col-span-1 sm:col-span-2 md:col-span-3 lg:col-span-2">
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1 flex items-center justify-between">
+              <span className="flex items-center gap-1">
+                <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                Rango de Fecha
+              </span>
+              {(filters.startDate !== initialDateRange.min || filters.endDate !== initialDateRange.max) && (
+                <button
+                  onClick={() =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      startDate: initialDateRange.min,
+                      endDate: initialDateRange.max,
+                    }))
+                  }
+                  className="text-[10px] text-blue-600 hover:underline cursor-pointer lowercase font-normal"
+                >
+                  restablecer
+                </button>
+              )}
+            </label>
+            <div className="flex items-center gap-2">
+              <div className="flex-1 flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500">
+                <span className="text-[11px] font-semibold text-slate-400">Del:</span>
+                <input
+                  type="date"
+                  value={filters.startDate}
+                  min={initialDateRange.min}
+                  max={filters.endDate || initialDateRange.max}
+                  onChange={(e) => {
+                    const selected = e.target.value;
+                    if (selected && initialDateRange.min && selected < initialDateRange.min) {
+                      setFilters({ ...filters, startDate: initialDateRange.min });
+                    } else {
+                      setFilters({ ...filters, startDate: selected });
+                    }
+                    setCurrentPage(1);
+                  }}
+                  className="w-full bg-transparent font-semibold text-slate-800 text-xs focus:outline-none cursor-pointer"
+                />
+              </div>
+              <div className="flex-1 flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500">
+                <span className="text-[11px] font-semibold text-slate-400">al:</span>
+                <input
+                  type="date"
+                  value={filters.endDate}
+                  min={filters.startDate || initialDateRange.min}
+                  max={initialDateRange.max}
+                  onChange={(e) => {
+                    const selected = e.target.value;
+                    if (selected && initialDateRange.max && selected > initialDateRange.max) {
+                      setFilters({ ...filters, endDate: initialDateRange.max });
+                    } else {
+                      setFilters({ ...filters, endDate: selected });
+                    }
+                    setCurrentPage(1);
+                  }}
+                  className="w-full bg-transparent font-semibold text-slate-800 text-xs focus:outline-none cursor-pointer"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Filter 2: Area */}
+          <div className="col-span-1">
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+              Área Operativa
+            </label>
+            <select
+              value={filters.selectedArea}
+              onChange={(e) => {
+                setFilters({ ...filters, selectedArea: e.target.value });
+                setCurrentPage(1);
+              }}
+              className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 cursor-pointer"
+            >
+              <option value="TODAS">Todas las Áreas ({allAreas.length})</option>
+              {allAreas.map((area) => (
+                <option key={area} value={area}>
+                  {area}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Filter 3: Cargo */}
+          <div className="col-span-1">
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+              Cargo / Puesto
+            </label>
+            <select
+              value={filters.selectedCargo}
+              onChange={(e) => {
+                setFilters({ ...filters, selectedCargo: e.target.value });
+                setCurrentPage(1);
+              }}
+              className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 cursor-pointer"
+            >
+              <option value="TODOS">Todos los Cargos ({allCargos.length})</option>
+              {allCargos.map((cargo) => (
+                <option key={cargo} value={cargo}>
+                  {cargo}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Filter 4: Tipo */}
+          <div className="col-span-1">
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+              Tipo Jornada
+            </label>
+            <select
+              value={filters.selectedType}
+              onChange={(e) => {
+                setFilters({ ...filters, selectedType: e.target.value as any });
+                setCurrentPage(1);
+              }}
+              className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 cursor-pointer"
+            >
+              <option value="ALL">Todas las Jornadas</option>
+              <option value="REGULAR">Ordinarias (Lunes a Sáb)</option>
+              <option value="SPECIAL">Dominicales y Feriados</option>
+            </select>
+          </div>
+
+          {/* Filter 5: Semana */}
+          <div className="col-span-1">
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+              Semana Operativa
+            </label>
+            <select
+              value={filters.selectedWeek}
+              onChange={(e) => {
+                setFilters({ ...filters, selectedWeek: e.target.value });
+                setCurrentPage(1);
+              }}
+              className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 cursor-pointer"
+            >
+              <option value="ALL">Todas las Semanas ({allWeeks.length})</option>
+              {allWeeks.map((w) => (
+                <option key={w} value={String(w)}>
+                  Semana {w}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Filter 6: Search box with predictive autocomplete */}
+          <div className="col-span-1 sm:col-span-2 md:col-span-3 lg:col-span-1" ref={searchContainerRef}>
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+              Búsqueda Rápida
+            </label>
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={filters.searchQuery}
+                onFocus={() => setShowSuggestions(true)}
+                onChange={(e) => {
+                  setFilters({ ...filters, searchQuery: e.target.value });
+                  setShowSuggestions(true);
+                  setCurrentPage(1);
+                }}
+                placeholder="Cargo, área, semana..."
+                className="w-full pl-8 pr-7 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+              />
+              {filters.searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilters({ ...filters, searchQuery: '' });
+                    setShowSuggestions(false);
+                    setCurrentPage(1);
+                  }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 focus:outline-none"
+                  title="Limpiar búsqueda"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+
+              {/* Predictive Autocomplete Suggestions */}
+              {showSuggestions && searchSuggestions.length > 0 && (
+                <div className="absolute z-50 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-150">
+                  <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
+                    <span>Sugerencias rápidas</span>
+                    <span className="text-[9px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded font-semibold">HHEE + Bono</span>
+                  </div>
+                  {searchSuggestions.map((item, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => {
+                        if (item.type === 'Cargo') {
+                          setFilters({ ...filters, selectedCargo: item.text, searchQuery: '' });
+                        } else if (item.type === 'Área') {
+                          setFilters({ ...filters, selectedArea: item.text, searchQuery: '' });
+                        } else if (item.type === 'Semana') {
+                          const wNum = item.text.replace('Semana ', '');
+                          setFilters({ ...filters, selectedWeek: wNum, searchQuery: '' });
+                        } else if (item.type === 'Tipo') {
+                          if (item.text.includes('Dominical')) {
+                            setFilters({ ...filters, selectedType: 'SPECIAL', searchQuery: '' });
+                          } else {
+                            setFilters({ ...filters, selectedType: 'REGULAR', searchQuery: '' });
+                          }
+                        } else {
+                          setFilters({ ...filters, searchQuery: item.text });
+                        }
+                        setShowSuggestions(false);
+                        setCurrentPage(1);
+                      }}
+                      className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-blue-50/70 hover:text-blue-700 transition-colors flex items-center justify-between border-b border-slate-50 last:border-0"
+                    >
+                      <span className="font-medium truncate pr-2">{item.text}</span>
+                      <span
+                        className={`text-[10px] px-1.5 py-0.5 rounded font-semibold shrink-0 ${
+                          item.type === 'Cargo'
+                            ? 'bg-purple-50 text-purple-600 border border-purple-100'
+                            : item.type === 'Área'
+                            ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+                            : item.type === 'Semana'
+                            ? 'bg-amber-50 text-amber-600 border border-amber-100'
+                            : 'bg-blue-50 text-blue-600 border border-blue-100'
+                        }`}
+                      >
+                        {item.type}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* KPI Stats Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
         {/* KPI 1: HHEE Total */}
@@ -594,11 +941,11 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">HHEE Total</span>
             <Clock className="w-4 h-4 text-blue-600" />
           </div>
-          <div className="text-2xl sm:text-3xl font-black text-blue-900 tabular-nums">
-            {formatHours(totalHours)} <span className="text-sm font-semibold text-slate-500">h</span>
+          <div className="text-xl sm:text-2xl font-black text-blue-900 tabular-nums whitespace-nowrap">
+            {formatHours(totalHours)} <span className="text-xs font-semibold text-slate-500">HH</span>
           </div>
           <div className="mt-1 text-[11px] text-slate-400 flex items-center justify-between">
-            <span>Volumen filtrado</span>
+            <span>Decimal: {formatHoursDecimal(totalHours)} h</span>
             <span className="font-semibold text-slate-600">100%</span>
           </div>
           <div className="absolute bottom-0 left-0 right-0 h-1 bg-blue-600"></div>
@@ -610,8 +957,8 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Ordinarias</span>
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">Lunes a Sáb</span>
           </div>
-          <div className="text-2xl sm:text-3xl font-black text-slate-800 tabular-nums">
-            {formatHours(regularHours)} <span className="text-sm font-semibold text-slate-500">h</span>
+          <div className="text-xl sm:text-2xl font-black text-slate-800 tabular-nums whitespace-nowrap">
+            {formatHours(regularHours)} <span className="text-xs font-semibold text-slate-500">HH</span>
           </div>
           <div className="mt-1 text-[11px] text-slate-400 flex items-center justify-between">
             <span>Sin feriado/domingo</span>
@@ -628,8 +975,8 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Dom / Feriados</span>
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-orange-100 text-orange-700">100% Tarifa</span>
           </div>
-          <div className="text-2xl sm:text-3xl font-black text-orange-600 tabular-nums">
-            {formatHours(specialHours)} <span className="text-sm font-semibold text-slate-500">h</span>
+          <div className="text-xl sm:text-2xl font-black text-orange-600 tabular-nums whitespace-nowrap">
+            {formatHours(specialHours)} <span className="text-xs font-semibold text-slate-500">HH</span>
           </div>
           <div className="mt-1 text-[11px] text-slate-400 flex items-center justify-between">
             <span>Dominical/Feriado</span>
@@ -669,148 +1016,20 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
           </div>
           <div className="mt-1 text-[11px] text-slate-400 flex items-center justify-between">
             <span>Pestaña BONO</span>
-            <span className="font-semibold text-indigo-700">{dataset.bo.length} asignaciones</span>
+            <span className="font-semibold text-indigo-700">{filteredBono.length} asignaciones</span>
           </div>
           <div className="absolute bottom-0 left-0 right-0 h-1 bg-indigo-600"></div>
         </div>
       </div>
 
-      {/* Interactive Filter Bar */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-3.5 pb-3 border-b border-slate-100">
-          <div className="flex items-center gap-2">
-            <Filter className="w-4 h-4 text-blue-600" />
-            <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-              Opciones de Filtro Avanzado
-            </h3>
-            <span className="text-[11px] text-slate-400">
-              ({filteredRecords.length} registros seleccionados)
-            </span>
-          </div>
-
-          <button
-            onClick={handleResetFilters}
-            className="flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-blue-600 cursor-pointer transition-colors"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Restablecer Filtros</span>
-          </button>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-          {/* Filter Area */}
-          <div>
-            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
-              Área Operativa
-            </label>
-            <select
-              value={filters.selectedArea}
-              onChange={(e) => {
-                setFilters({ ...filters, selectedArea: e.target.value });
-                setCurrentPage(1);
-              }}
-              className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 cursor-pointer"
-            >
-              <option value="TODAS">Todas las Áreas ({allAreas.length})</option>
-              {allAreas.map((area) => (
-                <option key={area} value={area}>
-                  {area}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Filter Cargo */}
-          <div>
-            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
-              Cargo / Puesto
-            </label>
-            <select
-              value={filters.selectedCargo}
-              onChange={(e) => {
-                setFilters({ ...filters, selectedCargo: e.target.value });
-                setCurrentPage(1);
-              }}
-              className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 cursor-pointer"
-            >
-              <option value="TODOS">Todos los Cargos ({allCargos.length})</option>
-              {allCargos.map((cargo) => (
-                <option key={cargo} value={cargo}>
-                  {cargo}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Filter Tipo */}
-          <div>
-            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
-              Tipo de Jornada
-            </label>
-            <select
-              value={filters.selectedType}
-              onChange={(e) => {
-                setFilters({ ...filters, selectedType: e.target.value as any });
-                setCurrentPage(1);
-              }}
-              className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 cursor-pointer"
-            >
-              <option value="ALL">Todas las Jornadas</option>
-              <option value="REGULAR">Ordinarias (Sin feriado ni domingos)</option>
-              <option value="SPECIAL">Dominicales y Feriados</option>
-            </select>
-          </div>
-
-          {/* Filter Semana */}
-          <div>
-            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
-              Semana Operativa
-            </label>
-            <select
-              value={filters.selectedWeek}
-              onChange={(e) => {
-                setFilters({ ...filters, selectedWeek: e.target.value });
-                setCurrentPage(1);
-              }}
-              className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 cursor-pointer"
-            >
-              <option value="ALL">Todas las Semanas ({allWeeks.length})</option>
-              {allWeeks.map((w) => (
-                <option key={w} value={String(w)}>
-                  Semana {w}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Search box */}
-          <div>
-            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
-              Búsqueda Rápida
-            </label>
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={filters.searchQuery}
-                onChange={(e) => {
-                  setFilters({ ...filters, searchQuery: e.target.value });
-                  setCurrentPage(1);
-                }}
-                placeholder="Buscar por cargo, área..."
-                className="w-full pl-8 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Directorial Decision Deck: Interactive Observations Cards */}
-      <ExecutiveObservationsSection
-        moduleName="overtime"
-        observations={getObservationsByModule('overtime')}
-        defaultExpanded={true}
-      />
+      {/* Directorial Decision Deck: Interactive Observations Cards (Only for Directorio mode) */}
+      {activeTab !== 'areas' && (
+        <ExecutiveObservationsSection
+          moduleName="overtime"
+          observations={getObservationsByModule('overtime')}
+          defaultExpanded={true}
+        />
+      )}
 
       {/* Navigation Sub-Tabs */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200">
@@ -872,7 +1091,7 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
       {/* Tab 1: Charts & Analytics (c1 to c6) */}
       {activeTab === 'charts' && (
         <div className="space-y-6">
-          <OvertimeCharts records={filteredRecords} bonusRecords={dataset.bo} />
+          <OvertimeCharts records={filteredRecords} bonusRecords={filteredBono} />
           {/* Also include matrix right below the charts just as in the original HTML! */}
           <OvertimeMatrix records={filteredRecords} allAreas={allAreas} />
         </div>
@@ -997,7 +1216,7 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
             const areaSpecialHours = areaRecords.filter((r) => r.x === 1).reduce((s, r) => s + r.h, 0);
             const areaRegularHours = areaTotalHours - areaSpecialHours;
             const pctOfTotal = totalHours > 0 ? (areaTotalHours / totalHours) * 100 : 0;
-            const bonoForArea = dataset.bo.filter((b) => b.a === area).reduce((s, b) => s + b.d, 0);
+            const bonoForArea = filteredBono.filter((b) => b.a === area).reduce((s, b) => s + b.d, 0);
 
             return (
               <div
@@ -1064,6 +1283,8 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
             );
           })}
         </div>
+      )}
+
       {/* MODAL: CONFIGURAR GOOGLE SHEETS PARA HHEE */}
       {showSheetsConfigModal && (
         <div

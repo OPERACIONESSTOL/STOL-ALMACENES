@@ -66,6 +66,21 @@ const useImportFreshness = (source: DataImportSource) => {
   return { record, isStale, markImported };
 };
 
+export const recordGoogleSheetsSyncFreshness = (source: DataImportSource, sheetName: string = 'Google Sheets') => {
+  const storageKey = `stol_import_status_${source}`;
+  const nextRecord: ImportRecord = {
+    importedAt: new Date().toISOString(),
+    fileName: `Google Sheets (${sheetName})`,
+    fileModifiedAt: new Date().toISOString(),
+  };
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(nextRecord));
+  } catch (error) {
+    console.warn(`Could not save Google Sheets import status for ${source}:`, error);
+  }
+  window.dispatchEvent(new Event(IMPORT_STATUS_EVENT));
+};
+
 export const DataFreshnessStatus: React.FC<{ source: DataImportSource }> = ({ source }) => {
   const { record, isStale } = useImportFreshness(source);
   const importedDate = record

@@ -41,7 +41,7 @@ import { ExecutiveObservationsSection } from '../components/ExecutiveObservation
 import { getObservationsByModule } from '../data/executiveObservationsRegistry';
 import { VolumetryCharts } from '../components/VolumetryCharts';
 import { VolumetrySyncPanel } from '../components/VolumetrySyncPanel';
-import { DataFreshnessStatus } from '../components/ManualDataImportPanel';
+import { DataFreshnessStatus, recordGoogleSheetsSyncFreshness } from '../components/ManualDataImportPanel';
 import { ReportModuleHeader, getReportMonthFromDate } from '../components/ReportModuleHeader';
 import { useRole } from '../context/RoleContext';
 import {
@@ -178,6 +178,7 @@ export const VolumetryView: React.FC<VolumetryViewProps> = ({ selectedMonth, onS
         const res = await syncVolumetryFromGoogleSheets(onlineUrl);
         if (res.success && res.data && res.data.length > 0) {
           setMeasurements(res.data);
+          recordGoogleSheetsSyncFreshness('volumetry', 'Maestro_SKU');
           const timeStr = `Hoy a las ${res.timestamp}`;
           setLastSyncTime(timeStr);
           try {

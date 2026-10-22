@@ -24,7 +24,7 @@ import { OvertimeRecord, BonusRecord, OvertimeDataset } from '../types/overtime'
 import { SkuMeasurement } from '../types/volumetry';
 import { CrossdockingSummary, CrossdockingDailyRecord } from '../types/crossdocking';
 import { cleanStr, normalizeMonthName } from '../utils/fleetExcel';
-import { isoToExcelSerial } from '../utils/overtimeExcel';
+import { isoToExcelSerial, excelSerialToIso } from '../utils/overtimeExcel';
 
 export interface GoogleSheetsConfig {
   sheetUrl: string;
@@ -44,10 +44,10 @@ export interface SyncResult<T> {
 }
 
 export const DEFAULT_DEMO_FLEET_SHEET_URL =
-  'https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/gviz/tq?tqx=out:csv&sheet=Flota_Horometros';
+  'https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/export?format=csv&sheet=Flota_Horometros';
 
 export const DEFAULT_DEMO_OVERTIME_SHEET_URL =
-  'https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/gviz/tq?tqx=out:csv&sheet=HHEE';
+  'https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/export?format=csv&sheet=HHEE';
 
 /**
  * Retrieve saved Google Sheets configuration for a specific tab/module
@@ -93,17 +93,13 @@ export function saveSheetsConfig(config: GoogleSheetsConfig, moduleKey: string =
 
 /**
  * Normalizes any Google Sheets user input URL into a downloadable CSV endpoint.
- * Handles:
- * - /spreadsheets/d/e/[ID]/pubhtml -> /spreadsheets/d/e/[ID]/pub?output=csv
- * - /spreadsheets/d/e/[ID]/pub -> ensures output=csv
- * - /spreadsheets/d/[ID]/edit#gid=[GID] -> /spreadsheets/d/[ID]/gviz/tq?tqx=out:csv&gid=[GID]
- * - Standard GViz endpoints
+ * Ignores active UI filters on the sheet by using /export?format=csv so 100% of data is fetched.
  */
 export function normalizeGoogleSheetsUrl(rawUrl: string, sheetTab?: string): string {
   const trimmed = rawUrl.trim();
   if (!trimmed) return '';
 
-  // Case 1: Published to web URL (/spreadsheets/d/e/2PACX-...)
+  // Case 1: Published to web URL (/spreadsheets/d/e/[ID]/pubhtml)
   if (trimmed.includes('/spreadsheets/d/e/')) {
     let url = trimmed;
     // Replace pubhtml with pub
@@ -133,19 +129,21 @@ export function normalizeGoogleSheetsUrl(rawUrl: string, sheetTab?: string): str
     return trimmed;
   }
 
-  // Case 3: Standard Google Spreadsheet URL e.g. https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/...
+  // Case 3: Standard Google Spreadsheet URL or GViz URL
   const match = trimmed.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
   if (match && match[1] && match[1] !== 'e') {
     const spreadsheetId = match[1];
     const gidMatch = trimmed.match(/[?&#]gid=([0-9]+)/);
 
-    let gvizUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv`;
+    // We prioritize /export?format=csv over /gviz/tq because GViz respects active UI auto-filters in Google Sheets,
+    // which causes hidden rows to be omitted. /export?format=csv exports ALL raw grid rows regardless of active filters.
+    let exportUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv`;
     if (sheetTab && sheetTab.trim()) {
-      gvizUrl += `&sheet=${encodeURIComponent(sheetTab.trim())}`;
+      exportUrl += `&sheet=${encodeURIComponent(sheetTab.trim())}`;
     } else if (gidMatch && gidMatch[1]) {
-      gvizUrl += `&gid=${gidMatch[1]}`;
+      exportUrl += `&gid=${gidMatch[1]}`;
     }
-    return gvizUrl;
+    return exportUrl;
   }
 
   return trimmed;
@@ -224,19 +222,19 @@ export async function fetchGoogleSheetCSV(url: string, sheetTab?: string): Promi
     throw new Error(`Error de conexión o bloqueo de origen (CORS): ${netErr?.message || 'Verifique que la hoja esté publicada en la web.'}`);
   }
 
-  // If primary fetch fails and it's a standard spreadsheet, try fallback to /export?format=csv
+  // If primary fetch fails and it's a standard spreadsheet, try fallback to /gviz/tq
   if (!response.ok && trimmedSpreadsheetId(url)) {
     const spreadsheetId = trimmedSpreadsheetId(url);
     const gidMatch = url.match(/[?&#]gid=([0-9]+)/);
-    let fallbackExportUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv`;
+    let fallbackGvizUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&tq=${encodeURIComponent('select *')}`;
     if (sheetTab && sheetTab.trim()) {
-      fallbackExportUrl += `&sheet=${encodeURIComponent(sheetTab.trim())}`;
+      fallbackGvizUrl += `&sheet=${encodeURIComponent(sheetTab.trim())}`;
     } else if (gidMatch && gidMatch[1]) {
-      fallbackExportUrl += `&gid=${gidMatch[1]}`;
+      fallbackGvizUrl += `&gid=${gidMatch[1]}`;
     }
 
     try {
-      const fallbackResp = await fetch(`${fallbackExportUrl}&_t=${timestamp}`);
+      const fallbackResp = await fetch(`${fallbackGvizUrl}&_t=${timestamp}`);
       if (fallbackResp.ok) {
         response = fallbackResp;
       }
@@ -461,16 +459,16 @@ export function mapRowsToOvertimeDataset(rows: string[][]): {
     if (hIdx !== -1) {
       headerRowIndex = r;
       headers = candidateHeaders;
+
+      let fechaIdx = candidateHeaders.findIndex(
+        (h) => h.includes('fecha') || h.includes('date') || h.includes('fec') || h === 'f'
+      );
+      if (fechaIdx === -1) {
+        fechaIdx = candidateHeaders.findIndex((h) => h === 'dia' || h.includes('jornada'));
+      }
+
       colIndex = {
-        fecha: candidateHeaders.findIndex(
-          (h) =>
-            h.includes('fecha') ||
-            h.includes('dia') ||
-            h.includes('date') ||
-            h.includes('fec') ||
-            h.includes('jornada') ||
-            h === 'f'
-        ),
+        fecha: fechaIdx,
         cargo: candidateHeaders.findIndex(
           (h) =>
             h.includes('cargo') ||
@@ -493,16 +491,18 @@ export function mapRowsToOvertimeDataset(rows: string[][]): {
         horas: hIdx,
         tipo: candidateHeaders.findIndex(
           (h) =>
+            h.includes('observacion') ||
+            h.includes('feriado') ||
+            h.includes('dominical') ||
             h.includes('tipo') ||
             h.includes('concepto') ||
-            h.includes('dominical') ||
-            h.includes('feriado') ||
             h.includes('modalidad') ||
             h.includes('clasificacion') ||
             h === 'x'
         ),
         semana: candidateHeaders.findIndex(
           (h) =>
+            h.includes('semanal') ||
             h.includes('semana') ||
             h.includes('sem') ||
             h.includes('week') ||
@@ -554,82 +554,87 @@ export function mapRowsToOvertimeDataset(rows: string[][]): {
 
     // Parse Hours
     const rawHoursStr = String(row[colIndex.horas] || '').trim();
-    if (!rawHoursStr) continue;
+    if (!rawHoursStr || rawHoursStr.toLowerCase().includes('total') || rawHoursStr.toLowerCase().includes('suma')) continue;
 
-    // Handle time formats like 02:30 or decimal like 2.5 or 2,5
+    // Handle time formats like 02:30:45, decimal like 2.5, or day fraction like 0.0965
     let parsedHours = 0;
     if (rawHoursStr.includes(':')) {
       const timeParts = rawHoursStr.split(':');
       const h = parseFloat(timeParts[0]) || 0;
       const m = parseFloat(timeParts[1]) || 0;
-      parsedHours = h + m / 60;
+      const s = parseFloat(timeParts[2]) || 0;
+      parsedHours = h + m / 60 + s / 3600;
     } else {
-      parsedHours = parseFloat(rawHoursStr.replace(/[^0-9.,]/g, '').replace(',', '.')) || 0;
+      const numVal = parseFloat(rawHoursStr.replace(/[^0-9.,]/g, '').replace(',', '.')) || 0;
+      if (numVal > 0 && numVal < 1.0) {
+        parsedHours = numVal * 24;
+      } else {
+        parsedHours = numVal;
+      }
     }
 
     if (parsedHours <= 0) continue;
 
-    // Parse Cargo
+    // Parse Cargo (exact user data)
     const rawCargo =
       colIndex.cargo >= 0 && row[colIndex.cargo] && row[colIndex.cargo].trim()
         ? row[colIndex.cargo].trim().toUpperCase()
-        : 'OPERARIO DE ALMACEN';
+        : 'OPERARIO';
 
-    // Parse Area
+    // Parse Area (exact user data without arbitrary forced overrides)
     let rawArea =
       colIndex.area >= 0 && row[colIndex.area] && row[colIndex.area].trim()
         ? row[colIndex.area].trim().toUpperCase()
-        : 'PICKING';
-    if (rawArea.includes('PICK')) rawArea = 'PICKING';
-    else if (rawArea.includes('ECOM')) rawArea = 'ECOMMERCE';
-    else if (rawArea.includes('DESP')) rawArea = 'DESPACHO';
-    else if (rawArea.includes('CROSS')) rawArea = 'CROSSDOCKING';
-    else if (rawArea.includes('ALM') || rawArea.includes('STOR')) rawArea = 'ALMACENAMIENTO';
-    else if (rawArea.includes('RECEP')) rawArea = 'RECEPCION';
-    else if (rawArea.includes('DEV') || rawArea.includes('MERM')) rawArea = 'DEVOLUCIONES';
+        : 'GENERAL';
 
     // Parse Date -> Excel serial
-    let dateSerial = 46310; // Default Oct 2026
+    let dateSerial = 0;
     let isoDateStr = '';
     if (colIndex.fecha >= 0 && row[colIndex.fecha]) {
-      const rawDate = row[colIndex.fecha].trim();
+      const rawDate = String(row[colIndex.fecha]).trim();
       const numVal = Number(rawDate);
       if (!isNaN(numVal) && numVal > 25000 && numVal < 60000) {
-        dateSerial = Math.round(numVal);
-      } else {
-        // Date formats: DD/MM/YYYY, YYYY-MM-DD, DD-MM-YYYY
-        let parsedIso = '';
-        if (rawDate.includes('/')) {
-          const parts = rawDate.split('/');
-          if (parts.length === 3) {
-            // Check if day first
-            if (parts[2].length === 4) {
-              const d = parts[0].padStart(2, '0');
-              const m = parts[1].padStart(2, '0');
-              const y = parts[2];
-              parsedIso = `${y}-${m}-${d}`;
-            }
-          }
-        } else if (rawDate.includes('-')) {
-          const parts = rawDate.split('-');
-          if (parts.length === 3) {
+        dateSerial = Math.floor(numVal);
+        isoDateStr = excelSerialToIso(dateSerial);
+      } else if (rawDate) {
+        const cleanDateStr = rawDate.split('T')[0].trim();
+        const parts = cleanDateStr.split(/[\/\-\.]/);
+        let y = 0, m = 0, d = 0;
+        if (parts.length === 3) {
+          const p0 = parseInt(parts[0], 10);
+          const p1 = parseInt(parts[1], 10);
+          const p2 = parseInt(parts[2], 10);
+          if (!isNaN(p0) && !isNaN(p1) && !isNaN(p2)) {
             if (parts[0].length === 4) {
-              parsedIso = rawDate;
-            } else if (parts[2].length === 4) {
-              const d = parts[0].padStart(2, '0');
-              const m = parts[1].padStart(2, '0');
-              const y = parts[2];
-              parsedIso = `${y}-${m}-${d}`;
+              // YYYY-MM-DD or YYYY/MM/DD
+              y = p0; m = p1; d = p2;
+            } else if (parts[2].length === 4 || parts[2].length === 2) {
+              // DD/MM/YYYY or DD/MM/YY (Peruvian DD/MM/YYYY standard)
+              d = p0; m = p1; y = parts[2].length === 2 ? 2000 + p2 : p2;
             }
           }
         }
-
-        if (parsedIso) {
-          isoDateStr = parsedIso;
-          const s = isoToExcelSerial(parsedIso);
-          if (s > 0) dateSerial = s;
+        if (y >= 2000 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+          const mStr = String(m).padStart(2, '0');
+          const dStr = String(d).padStart(2, '0');
+          isoDateStr = `${y}-${mStr}-${dStr}`;
+          dateSerial = isoToExcelSerial(isoDateStr);
+        } else {
+          const parsedTimestamp = Date.parse(rawDate);
+          if (!isNaN(parsedTimestamp)) {
+            const dObj = new Date(parsedTimestamp);
+            const yr = dObj.getUTCFullYear();
+            const mo = String(dObj.getUTCMonth() + 1).padStart(2, '0');
+            const dy = String(dObj.getUTCDate()).padStart(2, '0');
+            isoDateStr = `${yr}-${mo}-${dy}`;
+            dateSerial = isoToExcelSerial(isoDateStr);
+          }
         }
       }
+    }
+
+    if (!dateSerial) {
+      dateSerial = 46310; // Default Oct 2026 fallback only if no date could be parsed
     }
 
     // Parse Type: 1 = Dominical/Feriado/Especial, 0 = Ordinaria
@@ -641,6 +646,7 @@ export function mapRowsToOvertimeDataset(rows: string[][]): {
         rawTipo.includes('FER') ||
         rawTipo.includes('100') ||
         rawTipo.includes('ESP') ||
+        rawTipo.includes('EXTRA') ||
         rawTipo === '1'
       ) {
         tipoX = 1;
@@ -655,7 +661,6 @@ export function mapRowsToOvertimeDataset(rows: string[][]): {
         semana = rawSem;
       }
     } else if (isoDateStr) {
-      // Calculate week approximately from ISO date
       try {
         const d = new Date(isoDateStr);
         const start = new Date(d.getFullYear(), 0, 1);
@@ -673,9 +678,8 @@ export function mapRowsToOvertimeDataset(rows: string[][]): {
       w: semana,
     });
 
-    // Check Bonus
     if (colIndex.bonoDias >= 0 && row[colIndex.bonoDias]) {
-      const bDays = parseFloat(row[colIndex.bonoDias].replace(',', '.')) || 0;
+      const bDays = parseFloat(String(row[colIndex.bonoDias]).replace(',', '.')) || 0;
       if (bDays > 0) {
         const key = `${rawArea}___${rawCargo}`;
         bonoMap.set(key, (bonoMap.get(key) || 0) + bDays);
@@ -687,21 +691,9 @@ export function mapRowsToOvertimeDataset(rows: string[][]): {
     throw new Error('No se encontraron registros de horas válidos en la hoja consultada.');
   }
 
-  // Construct Bonus records
   const bo: BonusRecord[] = [];
   if (bonoMap.size > 0) {
     bonoMap.forEach((days, key) => {
-      const [area, cargo] = key.split('___');
-      bo.push({ a: area, c: cargo, d: days });
-    });
-  } else {
-    // Generate derived bonus stats from special hours
-    const areaCargoDays = new Map<string, number>();
-    hh.filter((r) => r.x === 1).forEach((r) => {
-      const key = `${r.a}___${r.c}`;
-      areaCargoDays.set(key, (areaCargoDays.get(key) || 0) + 1);
-    });
-    areaCargoDays.forEach((days, key) => {
       const [area, cargo] = key.split('___');
       bo.push({ a: area, c: cargo, d: days });
     });
@@ -712,6 +704,113 @@ export function mapRowsToOvertimeDataset(rows: string[][]): {
     columnsDetected: rows[0],
     warnings,
   };
+}
+
+export function mapRowsToBonusDataset(rows: string[][]): BonusRecord[] {
+  if (!rows || rows.length < 2) return [];
+
+  let headerRowIndex = 0;
+  let headers: string[] = [];
+  let areaIdx = -1;
+  let cargoIdx = -1;
+  let diasIdx = -1;
+  let delIdx = -1;
+  let alIdx = -1;
+
+  const maxSearch = Math.min(rows.length, 6);
+  for (let r = 0; r < maxSearch; r++) {
+    const candidateHeaders = rows[r].map((h) => cleanStr(h));
+    // Find 'dias' column using include to be robust to full header string
+    const dIdx = candidateHeaders.findIndex((h) => h.includes('dias'));
+    
+    if (dIdx !== -1) {
+      headerRowIndex = r;
+      headers = candidateHeaders;
+      diasIdx = dIdx;
+      
+      // Map based on cleanStr matches using includes
+      areaIdx = candidateHeaders.findIndex((h) => h.includes('area'));
+      cargoIdx = candidateHeaders.findIndex((h) => h.includes('cargo'));
+      delIdx = candidateHeaders.findIndex((h) => h.includes('del'));
+      alIdx = candidateHeaders.findIndex((h) => h.includes('al'));
+      
+      break;
+    }
+  }
+
+  // Fallback if not found by keyword
+  if (diasIdx === -1) {
+    headerRowIndex = 0;
+    headers = rows[0].map((h) => cleanStr(h));
+    areaIdx = headers.findIndex((h) => h.includes('area') || h === 'a');
+    cargoIdx = headers.findIndex((h) => h.includes('cargo') || h === 'c');
+    diasIdx = headers.findIndex((h) => h.includes('dias') || h.includes('dia') || h.includes('bono') || h.includes('d'));
+    delIdx = headers.findIndex((h) => h === 'del' || h.includes('del') || h.includes('desde'));
+    alIdx = headers.findIndex((h) => h === 'al' || h.includes('al') || h.includes('hasta'));
+  }
+
+  if (diasIdx === -1) return [];
+
+  const parseRowDate = (val: string): number => {
+    if (!val) return 0;
+    const num = Number(val);
+    if (!isNaN(num) && num > 25000 && num < 60000) return Math.floor(num);
+    const cleanDateStr = val.split('T')[0].trim();
+    const parts = cleanDateStr.split(/[\/\-\.]/);
+    if (parts.length === 3) {
+      const p0 = parseInt(parts[0], 10);
+      const p1 = parseInt(parts[1], 10);
+      const p2 = parseInt(parts[2], 10);
+      if (!isNaN(p0) && !isNaN(p1) && !isNaN(p2)) {
+        let y = 0, m = 0, d = 0;
+        if (parts[0].length === 4) {
+          y = p0; m = p1; d = p2;
+        } else if (parts[2].length === 4 || parts[2].length === 2) {
+          d = p0; m = p1; y = parts[2].length === 2 ? 2000 + p2 : p2;
+        }
+        if (y >= 2000 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+          const mStr = String(m).padStart(2, '0');
+          const dStr = String(d).padStart(2, '0');
+          return isoToExcelSerial(`${y}-${mStr}-${dStr}`);
+        }
+      }
+    }
+    const t = Date.parse(val);
+    if (!isNaN(t)) {
+      const dObj = new Date(t);
+      const yr = dObj.getUTCFullYear();
+      const mo = String(dObj.getUTCMonth() + 1).padStart(2, '0');
+      const dy = String(dObj.getUTCDate()).padStart(2, '0');
+      return isoToExcelSerial(`${yr}-${mo}-${dy}`);
+    }
+    return 0;
+  };
+
+  const bo: BonusRecord[] = [];
+  for (let i = headerRowIndex + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.length === 0) continue;
+    const rawDays = String(row[diasIdx] || '').trim();
+    if (!rawDays || rawDays.toLowerCase().includes('total') || rawDays.toLowerCase().includes('suma')) continue;
+    const days = parseFloat(rawDays.replace(',', '.')) || 0;
+    if (days <= 0) continue;
+
+    const a = areaIdx >= 0 && row[areaIdx] && row[areaIdx].trim() ? row[areaIdx].trim().toUpperCase() : 'GENERAL';
+    const c = cargoIdx >= 0 && row[cargoIdx] && row[cargoIdx].trim() ? row[cargoIdx].trim().toUpperCase() : 'OPERARIO';
+
+    const delSerial = delIdx >= 0 && row[delIdx] ? parseRowDate(row[delIdx].trim()) : 0;
+    const alSerial = alIdx >= 0 && row[alIdx] ? parseRowDate(row[alIdx].trim()) : 0;
+
+    bo.push({
+      a,
+      c,
+      d: days,
+      del: delSerial || undefined,
+      al: alSerial || undefined,
+      f: delSerial || alSerial || undefined,
+    });
+  }
+  return bo;
 }
 
 export async function syncOvertimeFromGoogleSheets(
@@ -725,14 +824,54 @@ export async function syncOvertimeFromGoogleSheets(
   });
 
   try {
+    // 1. Fetch HHEE tab
     const { rows } = await fetchGoogleSheetCSV(url, sheetTab || 'HHEE');
     const { dataset, columnsDetected } = mapRowsToOvertimeDataset(rows);
 
+    // 2. Try fetching separate BONO tab from the same spreadsheet workbook
+    let bonoRecords: BonusRecord[] = dataset.bo;
+    try {
+      const bonoResult = await fetchGoogleSheetCSV(url, 'BONO');
+      if (bonoResult.rows && bonoResult.rows.length > 1) {
+        const parsedBonus = mapRowsToBonusDataset(bonoResult.rows);
+        if (parsedBonus.length > 0) {
+          bonoRecords = parsedBonus;
+        }
+      }
+    } catch {
+      try {
+        const bonosResult = await fetchGoogleSheetCSV(url, 'Bonos');
+        if (bonosResult.rows && bonosResult.rows.length > 1) {
+          const parsedBonus = mapRowsToBonusDataset(bonosResult.rows);
+          if (parsedBonus.length > 0) {
+            bonoRecords = parsedBonus;
+          }
+        }
+      } catch {}
+    }
+
+    if (bonoRecords.length === 0) {
+      const areaCargoDays = new Map<string, number>();
+      dataset.hh.filter((r) => r.x === 1).forEach((r) => {
+        const key = `${r.a}___${r.c}`;
+        areaCargoDays.set(key, (areaCargoDays.get(key) || 0) + 1);
+      });
+      areaCargoDays.forEach((days, key) => {
+        const [area, cargo] = key.split('___');
+        bonoRecords.push({ a: area, c: cargo, d: days });
+      });
+    }
+
+    const finalDataset: OvertimeDataset = {
+      hh: dataset.hh,
+      bo: bonoRecords,
+    };
+
     return {
       success: true,
-      data: dataset,
+      data: finalDataset,
       timestamp,
-      rowCount: dataset.hh.length,
+      rowCount: finalDataset.hh.length,
       columnsDetected,
     };
   } catch (err: unknown) {

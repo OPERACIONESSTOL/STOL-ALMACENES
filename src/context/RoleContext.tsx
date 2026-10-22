@@ -22,6 +22,7 @@ interface RoleContextType {
   addBoardAgreement: (agreement: Omit<BoardDecisionAgreement, 'id' | 'decisionDate'>) => void;
   updateAgreementStatus: (id: string, status: BoardDecisionAgreement['status']) => void;
   lastOperationFeed: string;
+  setLastOperationFeed: (feed: string) => void;
   activeFeedersCount: number;
 }
 
@@ -68,6 +69,7 @@ const INITIAL_BOARD_AGREEMENTS: BoardDecisionAgreement[] = [
 
 export const RoleProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [role, setRole] = useState<UserRole>('DIRECTORIO');
+  const [lastOperationFeed, setLastOperationFeed] = useState<string>('Hoy, 12:45 (Sede Huachipa / Almacén Central)');
   const [boardAgreements, setBoardAgreements] = useState<BoardDecisionAgreement[]>(INITIAL_BOARD_AGREEMENTS);
 
   const toggleRole = () => {
@@ -102,7 +104,8 @@ export const RoleProvider: React.FC<{ children: React.ReactNode }> = ({ children
         boardAgreements,
         addBoardAgreement,
         updateAgreementStatus,
-        lastOperationFeed: 'Hoy, 12:45 (Sede Huachipa / Almacén Central)',
+        lastOperationFeed,
+        setLastOperationFeed,
         activeFeedersCount: 6,
       }}
     >

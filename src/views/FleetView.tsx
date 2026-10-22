@@ -34,7 +34,7 @@ import {
 import { ExecutiveObservationsSection } from '../components/ExecutiveObservationsSection';
 import { getObservationsByModule } from '../data/executiveObservationsRegistry';
 import { FleetReceptionUploader } from '../components/FleetReceptionUploader';
-import { DataFreshnessStatus, ManualDataImportPanel } from '../components/ManualDataImportPanel';
+import { DataFreshnessStatus, ManualDataImportPanel, recordGoogleSheetsSyncFreshness } from '../components/ManualDataImportPanel';
 import { parseFleetExcelFile, sortMonthsChronologically, getMonthChronologicalIndex } from '../utils/fleetExcel';
 import {
   getSavedSheetsConfig,
@@ -191,6 +191,7 @@ export const FleetView: React.FC<FleetViewProps> = ({ selectedMonth, onSelectMon
           new Set(res.data.flatMap((e) => Object.keys(e.meses || {})))
         );
         handleDataUpdated(res.data, incidencias, detectedMonths);
+        recordGoogleSheetsSyncFreshness('fleet', targetTab || 'Flota_Horometros');
         setDataSourceType('GOOGLE_SHEETS');
         setLastSyncTime(res.timestamp);
         try {
@@ -613,14 +614,6 @@ export const FleetView: React.FC<FleetViewProps> = ({ selectedMonth, onSelectMon
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
               <span>Configurar Enlace Sheets</span>
-            </button>
-
-            <button
-              onClick={handleResetToDefaults}
-              className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
-              title="Restablecer datos base oficiales"
-            >
-              <RotateCcw className="w-4 h-4" />
             </button>
           </div>
         </div>
