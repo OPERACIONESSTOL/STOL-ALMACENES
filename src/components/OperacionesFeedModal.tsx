@@ -100,10 +100,10 @@ export const OperacionesFeedModal: React.FC<OperacionesFeedModalProps> = ({
                 <div className="w-8 h-8 rounded-lg bg-orange-100 text-orange-700 flex items-center justify-center">
                   <Clock className="w-4 h-4" />
                 </div>
-                <h4 className="font-bold text-slate-900 text-xs">Cargar Excel de HHEE</h4>
+                <h4 className="font-bold text-slate-900 text-xs">Horas Extras (Google Sheets)</h4>
               </div>
               <p className="text-[11px] text-slate-600 leading-relaxed">
-                Importar archivo <code>.xlsx</code> oficial con hojas <code>HHEE</code> y <code>BONO</code>.
+                Sincronizar hoja en línea de Google Sheets con registros de <code>HHEE</code> y <code>BONO</code>.
               </p>
             </div>
 

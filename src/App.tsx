@@ -16,6 +16,8 @@ import { FleetView } from './views/FleetView';
 import { TelemetryView } from './views/TelemetryView';
 import { OvertimeView } from './views/OvertimeView';
 import { PublicWebsiteView } from './views/PublicWebsiteView';
+import { PowerBIView } from './views/PowerBIView';
+import { DataSourceHubModal } from './components/DataSourceHubModal';
 
 export default function App() {
   const [portalMode, setPortalMode] = useState<'website' | 'intranet'>(() => {
@@ -69,6 +71,7 @@ function MainAppLayout({ onSwitchToWebsite }: MainAppLayoutProps) {
   const [selectedProcess, setSelectedProcess] = useState<string>('Todos');
   const [globalSearchTerm, setGlobalSearchTerm] = useState<string>('');
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [isDataSourcesModalOpen, setIsDataSourcesModalOpen] = useState<boolean>(false);
 
   const handleRefresh = () => {
     setIsRefreshing(true);
@@ -92,6 +95,7 @@ function MainAppLayout({ onSwitchToWebsite }: MainAppLayoutProps) {
           anomaliesCount={0}
           inoperativityHours={24.5}
           onSwitchToWebsite={onSwitchToWebsite}
+          onOpenDataSources={() => setIsDataSourcesModalOpen(true)}
         />
       </div>
 
@@ -120,6 +124,10 @@ function MainAppLayout({ onSwitchToWebsite }: MainAppLayoutProps) {
                 setIsMobileMenuOpen(false);
                 onSwitchToWebsite();
               }}
+              onOpenDataSources={() => {
+                setIsMobileMenuOpen(false);
+                setIsDataSourcesModalOpen(true);
+              }}
             />
           </div>
         </div>
@@ -141,6 +149,7 @@ function MainAppLayout({ onSwitchToWebsite }: MainAppLayoutProps) {
           onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
           discrepanciesCount={3}
           onSwitchToWebsite={onSwitchToWebsite}
+          onOpenDataSources={() => setIsDataSourcesModalOpen(true)}
         />
 
         {/* Scrollable Workspace */}
@@ -215,9 +224,23 @@ function MainAppLayout({ onSwitchToWebsite }: MainAppLayoutProps) {
                 <TelemetryView selectedMonth={selectedMonth} onSelectMonth={setSelectedMonth} />
               </div>
             )}
+
+            {/* View 7: Inteligencia de Negocios · Power BI Embebido Interactivo */}
+            {activeModule === 'powerbi' && (
+              <div className="animate-in fade-in duration-200">
+                <PowerBIView />
+              </div>
+            )}
           </div>
         </main>
       </div>
+
+      {/* Multi-Source Data Integration Hub Modal */}
+      <DataSourceHubModal
+        isOpen={isDataSourcesModalOpen}
+        onClose={() => setIsDataSourcesModalOpen(false)}
+        onNavigateToPowerBI={() => setActiveModule('powerbi')}
+      />
     </div>
   );
 }

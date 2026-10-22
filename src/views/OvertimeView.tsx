@@ -12,7 +12,6 @@ import { OvertimeCharts } from '../components/OvertimeCharts';
 import { OvertimeMatrix } from '../components/OvertimeMatrix';
 import { ExecutiveObservationsSection } from '../components/ExecutiveObservationsSection';
 import { getObservationsByModule } from '../data/executiveObservationsRegistry';
-import { ManualDataImportPanel } from '../components/ManualDataImportPanel';
 import { REPORT_MONTHS, ReportModuleHeader, getReportMonthFromDate } from '../components/ReportModuleHeader';
 import {
   Clock,
@@ -33,7 +32,19 @@ import {
   ChevronRight,
   ShieldAlert,
   Sparkles,
+  RefreshCw,
+  Database,
+  ExternalLink,
+  X,
+  ShieldCheck,
+  AlertTriangle,
 } from 'lucide-react';
+import {
+  getSavedSheetsConfig,
+  saveSheetsConfig,
+  syncOvertimeFromGoogleSheets,
+  GoogleSheetsConfig,
+} from '../services/googleSheetsService';
 
 const INITIAL_DATA: OvertimeDataset = initialDataJson as unknown as OvertimeDataset;
 const OVERTIME_STORAGE_KEY = 'stol_overtime_dataset_v1';
@@ -218,36 +229,115 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
     return filteredRecords.slice(start, start + pageSize);
   }, [filteredRecords, currentPage]);
 
-  // Handle file upload
-  const handleImportFile = async (file: File): Promise<string> => {
+  // Multi-Source Integration State for HHEE Google Sheets
+  const [sheetsConfig, setSheetsConfig] = useState<GoogleSheetsConfig>(() => getSavedSheetsConfig('overtime'));
+  const [isSyncingSheets, setIsSyncingSheets] = useState<boolean>(false);
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(() => {
     try {
-      const buffer = await file.arrayBuffer();
-      if (!buffer.byteLength) throw new Error('El archivo está vacío o no se pudo leer.');
-      const parsed = parseOvertimeWorkbook(buffer);
-      if (!parsed.hh.length) throw new Error('El archivo no contiene filas de horas extras.');
-      setDataset(parsed);
-      setSourceName(`Archivo: ${file.name}`);
-      try {
-        localStorage.setItem('stol_overtime_source_name', `Archivo: ${file.name}`);
-      } catch (error) {
-        console.warn('Could not persist HHEE source name:', error);
-      }
-
-      const dates = parsed.hh.map((record) => record.f).filter(Boolean);
-      if (dates.length > 0) {
-        const minD = excelSerialToIso(Math.min(...dates));
-        const maxD = excelSerialToIso(Math.max(...dates));
-        setFilters((prev) => ({ ...prev, startDate: minD, endDate: maxD }));
-      }
-      setCurrentPage(1);
-      const resultMessage = `Se procesaron ${parsed.hh.length.toLocaleString('es-PE')} filas HHEE y ${parsed.bo.length.toLocaleString('es-PE')} filas de bonos.`;
-      showToast(resultMessage, 'success');
-      return resultMessage;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Formato no compatible.';
-      showToast(`No se pudo procesar el archivo: ${message}`, 'error');
-      throw new Error(message);
+      return localStorage.getItem('stol_overtime_last_sheets_sync') || null;
+    } catch {
+      return null;
     }
+  });
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [showSheetsConfigModal, setShowSheetsConfigModal] = useState<boolean>(false);
+  const [sheetsUrlInput, setSheetsUrlInput] = useState<string>(sheetsConfig.sheetUrl);
+  const [sheetsTabInput, setSheetsTabInput] = useState<string>(sheetsConfig.sheetTab || 'HHEE');
+  const [autoRefreshSecs, setAutoRefreshSecs] = useState<number>(sheetsConfig.autoRefreshIntervalSeconds || 60);
+  const [autoRefreshActive, setAutoRefreshActive] = useState<boolean>(sheetsConfig.autoRefreshEnabled || false);
+
+  const handleSyncGoogleSheets = async (urlToUse?: string, tabToUse?: string) => {
+    const targetUrl = urlToUse !== undefined ? urlToUse : sheetsConfig.sheetUrl;
+    const targetTab = tabToUse !== undefined ? tabToUse : (sheetsConfig.sheetTab || 'HHEE');
+
+    if (!targetUrl || !targetUrl.trim()) {
+      setShowSheetsConfigModal(true);
+      return;
+    }
+
+    setIsSyncingSheets(true);
+    setSyncError(null);
+
+    try {
+      const res = await syncOvertimeFromGoogleSheets(targetUrl, targetTab);
+      if (res.success && res.data && res.data.hh && res.data.hh.length > 0) {
+        setDataset(res.data);
+        const src = `Google Sheets (${targetTab || 'HHEE'})`;
+        setSourceName(src);
+        setLastSyncTime(res.timestamp);
+        try {
+          localStorage.setItem('stol_overtime_last_sheets_sync', res.timestamp);
+          localStorage.setItem('stol_overtime_source_name', src);
+        } catch (e) {}
+
+        const dates = res.data.hh.map((r) => r.f).filter((f) => typeof f === 'number' && !isNaN(f));
+        if (dates.length > 0) {
+          const minD = excelSerialToIso(Math.min(...dates));
+          const maxD = excelSerialToIso(Math.max(...dates));
+          setFilters((prev) => ({ ...prev, startDate: minD, endDate: maxD }));
+        }
+        setCurrentPage(1);
+        showToast(
+          `Sincronización exitosa: ${res.data.hh.length.toLocaleString('es-PE')} filas HHEE actualizadas.`,
+          'success'
+        );
+      } else {
+        const errorMsg = res.error || 'No se obtuvieron registros válidos de la hoja.';
+        setSyncError(errorMsg);
+        showToast(`Error al sincronizar: ${errorMsg}`, 'error');
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSyncError(msg);
+      showToast(`Error de conexión: ${msg}`, 'error');
+    } finally {
+      setIsSyncingSheets(false);
+    }
+  };
+
+  // Auto-refresh interval
+  useEffect(() => {
+    if (!autoRefreshActive || !sheetsConfig.sheetUrl) return;
+    const intervalMs = (autoRefreshSecs || 60) * 1000;
+    const timer = setInterval(() => {
+      handleSyncGoogleSheets(sheetsConfig.sheetUrl, sheetsConfig.sheetTab);
+    }, intervalMs);
+    return () => clearInterval(timer);
+  }, [autoRefreshActive, sheetsConfig.sheetUrl, sheetsConfig.sheetTab, autoRefreshSecs]);
+
+  const handleSaveSheetsConfigModal = () => {
+    const updated: GoogleSheetsConfig = {
+      sheetUrl: sheetsUrlInput.trim(),
+      sheetTab: sheetsTabInput.trim() || 'HHEE',
+      autoRefreshIntervalSeconds: autoRefreshSecs,
+      autoRefreshEnabled: autoRefreshActive,
+    };
+    setSheetsConfig(updated);
+    saveSheetsConfig(updated, 'overtime');
+    setShowSheetsConfigModal(false);
+    if (updated.sheetUrl) {
+      handleSyncGoogleSheets(updated.sheetUrl, updated.sheetTab);
+    }
+  };
+
+  const handleResetToDefaults = () => {
+    try {
+      localStorage.removeItem(OVERTIME_STORAGE_KEY);
+      localStorage.setItem('stol_overtime_source_name', 'Datos oficiales STOL');
+      localStorage.removeItem('stol_overtime_last_sheets_sync');
+    } catch (e) {}
+    setDataset(INITIAL_DATA);
+    setSourceName('Datos oficiales STOL');
+    setSyncError(null);
+    const dates = INITIAL_DATA.hh.map((r) => r.f).filter((f) => typeof f === 'number' && !isNaN(f));
+    if (dates.length > 0) {
+      setFilters((prev) => ({
+        ...prev,
+        startDate: excelSerialToIso(Math.min(...dates)),
+        endDate: excelSerialToIso(Math.max(...dates)),
+      }));
+    }
+    showToast('Datos oficiales base de HHEE restaurados.', 'success');
   };
 
   const handleResetFilters = () => {
@@ -288,14 +378,6 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
           <span>{toastMessage.text}</span>
         </div>
       )}
-
-      <ManualDataImportPanel
-        source="overtime"
-        title="Actualizar horas extras y bonos"
-        acceptedExtensions={['.xlsx', '.xlsm', '.xls']}
-        instructions="Importa el archivo oficial de HHEE. Se actualizan filas, fechas y métricas de bonos."
-        onImport={handleImportFile}
-      />
 
       {/* Top Header Card */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs relative overflow-hidden">
@@ -398,11 +480,110 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
             )}
           </div>
 
-          <div className="text-slate-400 text-[11px]">
-            Arrastra y suelta tu archivo <span className="font-semibold text-slate-600">.xlsx</span> aquí para
-            actualizar al instante.
+          <div className="text-slate-500 text-[11px] font-medium flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span>Conexión en línea vía Google Sheets (solo lectura)</span>
           </div>
         </div>
+      </div>
+
+      {/* MULTI-SOURCE SYNCHRONIZATION CONTROL BAR FOR HHEE */}
+      <div className="bg-white rounded-2xl border-2 border-slate-200 p-4 shadow-xs space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-slate-900 text-white">
+              <Database className="w-5 h-5 text-emerald-400" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-black text-slate-900 tracking-tight">
+                  Integración Google Sheets HHEE:
+                </span>
+                {sheetsConfig.sheetUrl ? (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    Enlace Activo ({sheetsConfig.sheetTab || 'HHEE'})
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-800 border border-amber-300">
+                    <AlertCircle className="w-3 h-3 text-amber-600" />
+                    Sin URL asignada · Usando base oficial
+                  </span>
+                )}
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                  Solo Lectura
+                </span>
+              </div>
+              <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5 flex-wrap">
+                <span>
+                  Última sincronización: <b>{lastSyncTime || 'Aún no sincronizado'}</b>
+                </span>
+                <span>•</span>
+                <span>
+                  Auto-sync (60s): <b>{autoRefreshActive ? 'Activo' : 'Inactivo'}</b>
+                </span>
+                <span>•</span>
+                <span className="text-slate-600">
+                  Registros cargados: <b>{dataset.hh.length.toLocaleString('es-PE')} filas</b>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Action Buttons */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => handleSyncGoogleSheets()}
+              disabled={isSyncingSheets}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black transition-all shadow-xs cursor-pointer disabled:opacity-50"
+              title="Consultar Google Sheets ahora"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingSheets ? 'animate-spin' : ''}`} />
+              <span>{isSyncingSheets ? 'Sincronizando...' : 'Sincronizar Sheets'}</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setSheetsUrlInput(sheetsConfig.sheetUrl);
+                setSheetsTabInput(sheetsConfig.sheetTab || 'HHEE');
+                setShowSheetsConfigModal(true);
+              }}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold border border-slate-300 transition-colors cursor-pointer"
+              title="Configurar enlace de Google Sheets para HHEE"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Configurar Enlace Sheets</span>
+            </button>
+
+            <button
+              onClick={handleResetToDefaults}
+              className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+              title="Restablecer datos oficiales STOL de HHEE"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Sync Error Notice with step-by-step guidance */}
+        {syncError && (
+          <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-start gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <span className="font-black text-rose-950">Aviso al conectar con Google Sheets:</span>
+              <p className="text-rose-800 leading-relaxed">{syncError}</p>
+              <div className="bg-white/80 p-2.5 rounded-lg border border-rose-200 text-[11px] text-slate-700 space-y-1 mt-1.5">
+                <p className="font-bold text-slate-900">Pasos recomendados para publicar tu Google Sheet:</p>
+                <ol className="list-decimal list-inside space-y-0.5">
+                  <li>En tu Google Sheets, abre el menú <strong>Archivo &gt; Compartir &gt; Publicar en la web</strong>.</li>
+                  <li>Selecciona la pestaña (ej. <em>HHEE</em>) y en formato elige <strong>Valores separados por comas (.csv)</strong>.</li>
+                  <li>Haz clic en <strong>Publicar</strong> y pega aquí el enlace generado.</li>
+                  <li>Alternativamente, asegúrate de que el acceso general esté en <strong>"Cualquier persona con el enlace (Lector)"</strong>.</li>
+                </ol>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* KPI Stats Cards */}
@@ -882,6 +1063,128 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
               </div>
             );
           })}
+        </div>
+      {/* MODAL: CONFIGURAR GOOGLE SHEETS PARA HHEE */}
+      {showSheetsConfigModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => setShowSheetsConfigModal(false)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl p-6 space-y-4 animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold">
+                  <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 tracking-tight">
+                    Conectar Google Sheets · Horas Extras (HHEE)
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Sincronización en vivo exclusiva para la pestaña de Horas Extras
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowSheetsConfigModal(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3.5 text-xs">
+              <div>
+                <label className="block font-bold text-slate-800 mb-1">
+                  Enlace de Google Sheets (Cualquier formato: público, web o normal):
+                </label>
+                <input
+                  type="url"
+                  value={sheetsUrlInput}
+                  onChange={(e) => setSheetsUrlInput(e.target.value)}
+                  placeholder="https://docs.google.com/spreadsheets/d/.../edit o /pubhtml"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-mono text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Admite enlaces publicados a la web (<code>pubhtml</code> / <code>pub?output=csv</code>) o el enlace de compartir con acceso de lector.
+                </p>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-800 mb-1">
+                  Nombre de la Pestaña / Hoja (opcional si usas enlace completo o primera pestaña):
+                </label>
+                <input
+                  type="text"
+                  value={sheetsTabInput}
+                  onChange={(e) => setSheetsTabInput(e.target.value)}
+                  placeholder="HHEE"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Por defecto busca <code>HHEE</code>. Si tu hoja tiene otro nombre (ej. <em>Hoja 1</em>), especifícalo aquí.
+                </p>
+              </div>
+
+              <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl space-y-2">
+                <span className="font-bold text-emerald-950 block">Columnas esperadas en tu hoja:</span>
+                <p className="text-[11px] text-emerald-900 leading-relaxed">
+                  Tu hoja debe tener encabezados como: <strong>Fecha</strong>, <strong>Cargo</strong>, <strong>Área</strong>, <strong>Horas</strong> (u <em>HHEE</em>), <strong>Tipo</strong> (Ordinaria / Dominical / Feriado) y <strong>Semana</strong>.
+                </p>
+              </div>
+
+              {/* Auto Refresh Setting */}
+              <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                <div>
+                  <span className="font-bold text-slate-800 block text-xs">
+                    Actualización automática periódica
+                  </span>
+                  <span className="text-[11px] text-slate-500">
+                    Consulta automáticamente la hoja cada {autoRefreshSecs} segundos
+                  </span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={autoRefreshActive}
+                  onChange={(e) => setAutoRefreshActive(e.target.checked)}
+                  className="w-4 h-4 text-emerald-600 rounded cursor-pointer"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-3 border-t border-slate-100 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setSheetsUrlInput('');
+                  setSheetsTabInput('HHEE');
+                }}
+                className="text-xs text-rose-600 hover:underline font-semibold cursor-pointer"
+              >
+                Limpiar Enlace
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowSheetsConfigModal(false)}
+                  className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 text-xs font-semibold cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveSheetsConfigModal}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-sm cursor-pointer"
+                >
+                  Guardar y Sincronizar
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

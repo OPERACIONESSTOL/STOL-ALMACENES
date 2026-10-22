@@ -20,6 +20,8 @@ import {
   Layers,
   Sparkles,
   Globe,
+  Database,
+  BarChart3,
 } from 'lucide-react';
 import { AppModule } from './Sidebar';
 import { useRole } from '../context/RoleContext';
@@ -39,6 +41,7 @@ interface ExecutiveNavbarProps {
   onOpenMobileMenu?: () => void;
   discrepanciesCount: number;
   onSwitchToWebsite?: () => void;
+  onOpenDataSources?: () => void;
 }
 
 export const ExecutiveNavbar: React.FC<ExecutiveNavbarProps> = ({
@@ -54,6 +57,7 @@ export const ExecutiveNavbar: React.FC<ExecutiveNavbarProps> = ({
   onOpenMobileMenu,
   discrepanciesCount,
   onSwitchToWebsite,
+  onOpenDataSources,
 }) => {
   const { role, setRole, toggleRole, lastOperationFeed, boardAgreements } = useRole();
   const [isOpenBoardPack, setIsOpenBoardPack] = useState(false);
@@ -96,16 +100,34 @@ export const ExecutiveNavbar: React.FC<ExecutiveNavbarProps> = ({
           title: 'Telemetría de Volúmenes Operativos',
           subtitle: 'Seguimiento en m³, Metas, Capacidad de Procesos y Tendencias Históricas',
         };
+      case 'powerbi':
+        return {
+          title: 'Inteligencia de Negocios · Informes Corporativos Power BI',
+          subtitle: 'Visualización Segura de Modelos Semánticos DAX y Tableros Ejecutivos Centralizados',
+        };
     }
   };
 
   const { title, subtitle } = getModuleTitle();
 
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const dropdownRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   return (
     <>
       <header className="bg-white border-b border-slate-200 sticky top-0 z-20 shadow-xs">
         {/* Main Nav Strip */}
-        <div className="px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-3">
           {/* Left: Logo & Titles */}
           <div className="flex items-center gap-3">
             {onOpenMobileMenu && (
@@ -126,54 +148,24 @@ export const ExecutiveNavbar: React.FC<ExecutiveNavbarProps> = ({
                 <h2 className="text-base sm:text-lg font-black text-slate-900 tracking-tight font-sans">
                   {title}
                 </h2>
+                {role === 'DIRECTORIO' ? (
+                  <span className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-900 border border-amber-300">
+                    <ShieldCheck className="w-3 h-3 text-amber-600" />
+                    Directorio · Solo Lectura
+                  </span>
+                ) : (
+                  <span className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-blue-100 text-blue-900 border border-blue-300">
+                    <Layers className="w-3 h-3 text-blue-600" />
+                    Operaciones · Alimentación en Sede
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-500 font-medium hidden sm:block">{subtitle}</p>
             </div>
           </div>
 
-          {/* Right: Operational Controls & Role Switcher */}
+          {/* Right: Operational Controls & Dropdown Menu */}
           <div className="flex items-center gap-2 flex-wrap">
-            {/* SWITCH TO PUBLIC WEBSITE */}
-            {onSwitchToWebsite && (
-              <button
-                onClick={onSwitchToWebsite}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs border border-slate-300 transition-all cursor-pointer shadow-xs hover:border-blue-400"
-                title="Ver la Página Web Comercial y Pública de STOL"
-              >
-                <Globe className="w-3.5 h-3.5 text-blue-600" />
-                <span className="hidden sm:inline">Página Web Pública</span>
-              </button>
-            )}
-
-            {/* PERSPECTIVE SWITCHER: DIRECTORIO VS OPERACIONES */}
-            <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 shadow-inner">
-              <button
-                onClick={() => setRole('DIRECTORIO')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  role === 'DIRECTORIO'
-                    ? 'bg-slate-900 text-white shadow-sm ring-1 ring-slate-800'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-                title="Modo Directorio: Orientado a supervisión remota, riesgos y toma de decisiones"
-              >
-                <Briefcase className="w-3.5 h-3.5 text-amber-400" />
-                <span>Directorio</span>
-              </button>
-
-              <button
-                onClick={() => setRole('OPERACIONES')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  role === 'OPERACIONES'
-                    ? 'bg-blue-700 text-white shadow-sm ring-1 ring-blue-600'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-                title="Modo Operaciones: Orientado a alimentación y carga de información en sede"
-              >
-                <Layers className="w-3.5 h-3.5 text-cyan-300" />
-                <span>Operaciones</span>
-              </button>
-            </div>
-
             {/* Role Action Button */}
             {role === 'DIRECTORIO' ? (
               <button
@@ -193,7 +185,7 @@ export const ExecutiveNavbar: React.FC<ExecutiveNavbarProps> = ({
               <button
                 onClick={() => setIsOpenFeedModal(true)}
                 className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs transition-all shadow-sm shadow-emerald-600/20 cursor-pointer"
-                title="Alimentar datos operativos en sede (Excel HHEE, Mediciones, Flota)"
+                title="Alimentar datos operativos en sede (Google Sheets, Mediciones, Flota)"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>+ Cargar Datos en Sede</span>
@@ -201,7 +193,7 @@ export const ExecutiveNavbar: React.FC<ExecutiveNavbarProps> = ({
             )}
 
             {/* Global Search Bar */}
-            <div className="relative hidden lg:block">
+            <div className="relative hidden xl:block">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
               <input
                 type="text"
@@ -236,7 +228,7 @@ export const ExecutiveNavbar: React.FC<ExecutiveNavbarProps> = ({
               title="Sincronizar y actualizar información"
             >
               <RefreshCw className={`w-3.5 h-3.5 text-blue-600 ${isRefreshing ? 'animate-spin' : ''}`} />
-              <span className="hidden xl:inline">Sincronizar</span>
+              <span className="hidden 2xl:inline">Sincronizar</span>
             </button>
 
             {/* Print / PDF Action */}
@@ -247,6 +239,152 @@ export const ExecutiveNavbar: React.FC<ExecutiveNavbarProps> = ({
               <Printer className="w-3.5 h-3.5 text-amber-400" />
               <span className="hidden sm:inline">Exportar PDF</span>
             </button>
+
+            {/* USER PROFILE & MODE SWITCHER DROPDOWN MENU */}
+            <div className="relative" ref={dropdownRef}>
+              <button
+                onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all cursor-pointer shadow-sm border border-slate-700"
+                title="Menú de Usuario, Modo de Visualización y Enlaces"
+              >
+                <div className={`w-2 h-2 rounded-full ${role === 'DIRECTORIO' ? 'bg-amber-400' : 'bg-cyan-400'} animate-pulse`} />
+                <span className="text-slate-300 font-medium hidden sm:inline">Modo:</span>
+                <span className="font-black text-white">
+                  {role === 'DIRECTORIO' ? 'Directorio' : 'Operaciones'}
+                </span>
+                <span className="text-slate-400 text-[10px]">▼</span>
+              </button>
+
+              {/* FLOATING DROPDOWN CONTENT */}
+              {isDropdownOpen && (
+                <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 p-3.5 z-50 animate-in fade-in zoom-in-95 duration-150 text-slate-800">
+                  {/* User Profile Header */}
+                  <div className="pb-3 border-b border-slate-100">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-slate-900 to-blue-900 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                        ST
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="font-black text-xs text-slate-900 truncate">cd.stol.008@gmail.com</div>
+                        <div className="text-[10px] text-slate-500 font-medium">STOL Logística S.A.C. · Intranet</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Mode Selector Section */}
+                  <div className="py-3 border-b border-slate-100 space-y-2">
+                    <div className="text-[10.5px] font-black uppercase tracking-wider text-slate-400">
+                      Seleccionar Modo de Plataforma:
+                    </div>
+
+                    <div className="space-y-1.5">
+                      {/* Modo Directorio */}
+                      <button
+                        onClick={() => {
+                          setRole('DIRECTORIO');
+                          setIsDropdownOpen(false);
+                        }}
+                        className={`w-full flex items-start gap-2.5 p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                          role === 'DIRECTORIO'
+                            ? 'bg-amber-50/80 border-amber-300 shadow-xs'
+                            : 'border-slate-100 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="p-1.5 rounded-lg bg-amber-500 text-slate-950 font-bold shrink-0 mt-0.5">
+                          <Briefcase className="w-3.5 h-3.5" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between">
+                            <span className="font-black text-xs text-slate-900">Modo Directorio</span>
+                            {role === 'DIRECTORIO' && (
+                              <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.2 rounded-full">
+                                Activo
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[10.5px] text-slate-500 leading-tight mt-0.5">
+                            Supervisión ejecutiva, solo lectura, acceso al Dossier de Directorio y acuerdos.
+                          </p>
+                        </div>
+                      </button>
+
+                      {/* Modo Operaciones */}
+                      <button
+                        onClick={() => {
+                          setRole('OPERACIONES');
+                          setIsDropdownOpen(false);
+                        }}
+                        className={`w-full flex items-start gap-2.5 p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                          role === 'OPERACIONES'
+                            ? 'bg-blue-50/80 border-blue-300 shadow-xs'
+                            : 'border-slate-100 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="p-1.5 rounded-lg bg-blue-600 text-white font-bold shrink-0 mt-0.5">
+                          <Layers className="w-3.5 h-3.5" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between">
+                            <span className="font-black text-xs text-slate-900">Modo Operaciones</span>
+                            {role === 'OPERACIONES' && (
+                              <span className="text-[10px] font-bold text-blue-700 bg-blue-100 px-1.5 py-0.2 rounded-full">
+                                Activo
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[10.5px] text-slate-500 leading-tight mt-0.5">
+                            Registro operativo en sede y alimentación de datos en línea.
+                          </p>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Navigation Links in Dropdown */}
+                  <div className="pt-2.5 space-y-1">
+                    {/* Public Website Button */}
+                    {onSwitchToWebsite && (
+                      <button
+                        onClick={() => {
+                          setIsDropdownOpen(false);
+                          onSwitchToWebsite();
+                        }}
+                        className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-blue-50 text-slate-800 text-xs font-bold transition-colors cursor-pointer group"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Globe className="w-4 h-4 text-blue-600 group-hover:scale-110 transition-transform" />
+                          <div className="text-left">
+                            <span className="block font-black text-slate-900">Página Web Pública</span>
+                            <span className="block text-[10px] text-slate-500 font-normal">Portal comercial y de clientes</span>
+                          </div>
+                        </div>
+                        <span className="text-blue-600 text-xs font-bold">Ir →</span>
+                      </button>
+                    )}
+
+                    {/* Data Sources Button */}
+                    {onOpenDataSources && (
+                      <button
+                        onClick={() => {
+                          setIsDropdownOpen(false);
+                          onOpenDataSources();
+                        }}
+                        className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-emerald-50 text-slate-800 text-xs font-bold transition-colors cursor-pointer group"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Database className="w-4 h-4 text-emerald-600 group-hover:scale-110 transition-transform" />
+                          <div className="text-left">
+                            <span className="block font-black text-slate-900">Fuentes de Datos</span>
+                            <span className="block text-[10px] text-slate-500 font-normal">Google Sheets, Power BI, Supabase</span>
+                          </div>
+                        </div>
+                        <span className="text-emerald-600 text-xs font-bold">Ver →</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 

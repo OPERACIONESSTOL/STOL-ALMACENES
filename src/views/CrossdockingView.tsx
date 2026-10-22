@@ -26,11 +26,21 @@ import {
   Clock,
   Printer,
   ChevronDown,
+  Database,
+  X,
+  RotateCcw,
+  AlertCircle,
 } from 'lucide-react';
 import { ExecutiveObservationsSection } from '../components/ExecutiveObservationsSection';
 import { getObservationsByModule } from '../data/executiveObservationsRegistry';
 import { DataFreshnessStatus, ManualDataImportPanel } from '../components/ManualDataImportPanel';
 import { ReportModuleHeader, getReportMonthFromDate } from '../components/ReportModuleHeader';
+import {
+  getSavedSheetsConfig,
+  saveSheetsConfig,
+  syncCrossdockingFromGoogleSheets,
+  GoogleSheetsConfig,
+} from '../services/googleSheetsService';
 
 const STORAGE_KEY_SUMMARY = 'stol_crossdocking_summary';
 const STORAGE_KEY_RECORDS = 'stol_crossdocking_records';
@@ -218,7 +228,7 @@ export const CrossdockingView: React.FC<CrossdockingViewProps> = ({ selectedMont
             <div className="mt-3 text-[10.5px] text-slate-500 flex items-center gap-1.5">
               <Info className="w-3.5 h-3.5 text-blue-500 shrink-0" />
               <span>
-                Al subir un nuevo Excel, este rango B2:D6 se leerá y actualizará automáticamente.
+                Información sincronizada en línea mediante Google Sheets y registros oficiales de sede.
               </span>
             </div>
           </div>

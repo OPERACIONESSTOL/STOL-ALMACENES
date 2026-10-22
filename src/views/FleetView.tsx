@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Equipment, MaintenanceIncident } from '../types/fleet';
 import { FLEET_EQUIPOS, FLEET_INCIDENCIAS } from '../data/initialFleetData';
 import {
@@ -27,12 +27,23 @@ import {
   Play,
   X,
   ExternalLink,
+  RefreshCw,
+  Database,
+  Download,
 } from 'lucide-react';
 import { ExecutiveObservationsSection } from '../components/ExecutiveObservationsSection';
 import { getObservationsByModule } from '../data/executiveObservationsRegistry';
 import { FleetReceptionUploader } from '../components/FleetReceptionUploader';
 import { DataFreshnessStatus, ManualDataImportPanel } from '../components/ManualDataImportPanel';
 import { parseFleetExcelFile, sortMonthsChronologically, getMonthChronologicalIndex } from '../utils/fleetExcel';
+import {
+  getSavedSheetsConfig,
+  saveSheetsConfig,
+  syncFleetFromGoogleSheets,
+  DEFAULT_DEMO_FLEET_SHEET_URL,
+  GoogleSheetsConfig,
+} from '../services/googleSheetsService';
+import { downloadFleetExcelTemplate } from '../services/excelService';
 
 interface FleetViewProps {
   selectedMonth: string;
@@ -90,10 +101,30 @@ export const FleetView: React.FC<FleetViewProps> = ({ selectedMonth, onSelectMon
   });
 
   const activeMonth = selectedMonth;
+  const setActiveMonth = onSelectMonth;
   const [lastUploadNotice, setLastUploadNotice] = useState<string | null>(null);
   const [chartFilter, setChartFilter] = useState<'ALL' | 'MONTACARGA' | 'ELEVADOR' | 'EXCESO'>('ALL');
   const [incTypeFilter, setIncTypeFilter] = useState<'ALL' | 'CORRECTIVO' | 'PREVENTIVO'>('ALL');
   const [incSearchText, setIncSearchText] = useState<string>('');
+
+  // Multi-Source Integration State (Google Sheets, Excel Local, Base Oficial)
+  const [sheetsConfig, setSheetsConfig] = useState<GoogleSheetsConfig>(getSavedSheetsConfig());
+  const [isSyncingSheets, setIsSyncingSheets] = useState<boolean>(false);
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(() => {
+    return localStorage.getItem('stol_fleet_last_sheets_sync') || null;
+  });
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [dataSourceType, setDataSourceType] = useState<'GOOGLE_SHEETS' | 'EXCEL' | 'BASE'>(() => {
+    const savedSrc = localStorage.getItem('stol_fleet_data_source_type');
+    if (savedSrc === 'GOOGLE_SHEETS' || savedSrc === 'EXCEL') return savedSrc;
+    return 'BASE';
+  });
+  const [showSheetsConfigModal, setShowSheetsConfigModal] = useState<boolean>(false);
+  const [sheetsUrlInput, setSheetsUrlInput] = useState<string>(sheetsConfig.sheetUrl);
+  const [sheetsTabInput, setSheetsTabInput] = useState<string>(sheetsConfig.sheetTab || 'Flota_Horometros');
+  const [autoRefreshSecs, setAutoRefreshSecs] = useState<number>(sheetsConfig.autoRefreshIntervalSeconds || 60);
+  const [autoRefreshActive, setAutoRefreshActive] = useState<boolean>(sheetsConfig.autoRefreshEnabled || false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Advanced Calendar & Timeline Filters (Requested by user)
   const [dateFilterMode, setDateFilterMode] = useState<
@@ -133,7 +164,78 @@ export const FleetView: React.FC<FleetViewProps> = ({ selectedMonth, onSelectMon
   const handleImportFleetFile = async (file: File): Promise<string> => {
     const result = await parseFleetExcelFile(file);
     handleDataUpdated(result.equipos, result.incidencias, result.detectedMonths);
+    setDataSourceType('EXCEL');
+    try {
+      localStorage.setItem('stol_fleet_data_source_type', 'EXCEL');
+    } catch (e) {}
     return `${result.message} Se cargaron ${result.equipmentCount} equipos y ${result.incidentsCount} incidencias. Hojas: ${result.sheetNames.join(', ')}.`;
+  };
+
+  const handleSyncGoogleSheets = async (urlToUse?: string, tabToUse?: string) => {
+    const targetUrl = urlToUse !== undefined ? urlToUse : sheetsConfig.sheetUrl;
+    const targetTab = tabToUse !== undefined ? tabToUse : (sheetsConfig.sheetTab || 'Flota_Horometros');
+
+    if (!targetUrl || !targetUrl.trim()) {
+      setShowSheetsConfigModal(true);
+      return;
+    }
+
+    setIsSyncingSheets(true);
+    setSyncError(null);
+
+    try {
+      const res = await syncFleetFromGoogleSheets(targetUrl, targetTab);
+      if (res.success && res.data && res.data.length > 0) {
+        // Collect detected months from equipment records
+        const detectedMonths = Array.from(
+          new Set(res.data.flatMap((e) => Object.keys(e.meses || {})))
+        );
+        handleDataUpdated(res.data, incidencias, detectedMonths);
+        setDataSourceType('GOOGLE_SHEETS');
+        setLastSyncTime(res.timestamp);
+        try {
+          localStorage.setItem('stol_fleet_last_sheets_sync', res.timestamp);
+          localStorage.setItem('stol_fleet_data_source_type', 'GOOGLE_SHEETS');
+        } catch (e) {}
+        setLastUploadNotice(
+          `Sincronización exitosa con Google Sheets: ${res.data.length} equipos cargados (${res.rowCount} filas de horómetros).`
+        );
+      } else {
+        setSyncError(res.error || 'No se obtuvieron registros válidos de la hoja.');
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSyncError(msg);
+    } finally {
+      setIsSyncingSheets(false);
+    }
+  };
+
+  // Periodic Auto-refresh effect (e.g. 60s)
+  useEffect(() => {
+    if (!autoRefreshActive || !sheetsConfig.sheetUrl) return;
+
+    const intervalMs = (autoRefreshSecs || 60) * 1000;
+    const timer = setInterval(() => {
+      handleSyncGoogleSheets(sheetsConfig.sheetUrl, sheetsConfig.sheetTab);
+    }, intervalMs);
+
+    return () => clearInterval(timer);
+  }, [autoRefreshActive, sheetsConfig.sheetUrl, sheetsConfig.sheetTab, autoRefreshSecs]);
+
+  const handleSaveSheetsConfigModal = () => {
+    const updated: GoogleSheetsConfig = {
+      sheetUrl: sheetsUrlInput.trim(),
+      sheetTab: sheetsTabInput.trim() || 'Flota_Horometros',
+      autoRefreshIntervalSeconds: autoRefreshSecs,
+      autoRefreshEnabled: autoRefreshActive,
+    };
+    setSheetsConfig(updated);
+    saveSheetsConfig(updated);
+    setShowSheetsConfigModal(false);
+    if (updated.sheetUrl) {
+      handleSyncGoogleSheets(updated.sheetUrl, updated.sheetTab);
+    }
   };
 
   const handleResetToDefaults = () => {
@@ -142,11 +244,13 @@ export const FleetView: React.FC<FleetViewProps> = ({ selectedMonth, onSelectMon
       localStorage.removeItem('stol_fleet_incidencias_v3');
       localStorage.removeItem('stol_fleet_equipos_v1');
       localStorage.removeItem('stol_fleet_incidencias_v1');
+      localStorage.removeItem('stol_fleet_data_source_type');
     } catch (e) {
       console.warn(e);
     }
     setEquipos(FLEET_EQUIPOS);
     setIncidencias(FLEET_INCIDENCIAS);
+    setDataSourceType('BASE');
     const defMonths = sortMonthsChronologically(['Julio', 'Agosto', 'Setiembre', 'Octubre']);
     setAvailableMonths(defMonths);
     setActiveMonth('Setiembre');
@@ -450,21 +554,211 @@ export const FleetView: React.FC<FleetViewProps> = ({ selectedMonth, onSelectMon
         </div>
       )}
 
-      <div className="space-y-2">
-        <ManualDataImportPanel
-          source="fleet"
-          title="Actualizar horómetros, flota e incidencias"
-          acceptedExtensions={['.xlsx', '.xls', '.csv']}
-          instructions="Formato DATA_DASHBOARD_EJECUTIVO con hojas de flota y bitácora."
-          onImport={handleImportFleetFile}
-        />
-        <button
-          onClick={handleResetToDefaults}
-          className="text-xs font-semibold text-slate-500 hover:text-rose-700 underline underline-offset-2"
-        >
-          Restablecer datos de demostración
-        </button>
+      {/* MULTI-SOURCE SYNCHRONIZATION CONTROL BAR */}
+      <div className="bg-white rounded-2xl border-2 border-slate-200 p-4 shadow-sm space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-slate-900 text-white">
+              <Database className="w-5 h-5 text-emerald-400" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-black text-slate-900 tracking-tight">
+                  Integración Multi-Fuente de Horómetros:
+                </span>
+                {dataSourceType === 'GOOGLE_SHEETS' && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    Google Sheets en Vivo ({sheetsConfig.sheetTab || 'Flota_Horometros'})
+                  </span>
+                )}
+                {dataSourceType !== 'GOOGLE_SHEETS' && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-slate-100 text-slate-700 border border-slate-300">
+                    <ShieldCheck className="w-3 h-3 text-slate-600" />
+                    Base Oficial STOL Auditoría
+                  </span>
+                )}
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                  Solo Lectura
+                </span>
+              </div>
+              <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
+                <span>
+                  Última sincronización: <b>{lastSyncTime || 'Aún no sincronizado'}</b>
+                </span>
+                <span>•</span>
+                <span>
+                  Auto-sync (60s): <b>{autoRefreshActive ? 'Activo' : 'Inactivo'}</b>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Action Buttons */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => handleSyncGoogleSheets()}
+              disabled={isSyncingSheets}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black transition-all shadow-xs cursor-pointer disabled:opacity-50"
+              title="Consultar Google Sheets ahora"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingSheets ? 'animate-spin' : ''}`} />
+              <span>{isSyncingSheets ? 'Sincronizando...' : 'Sincronizar Sheets'}</span>
+            </button>
+
+            <button
+              onClick={() => setShowSheetsConfigModal(true)}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold border border-slate-300 transition-colors cursor-pointer"
+              title="Configurar enlace de Google Sheets"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Configurar Enlace Sheets</span>
+            </button>
+
+            <button
+              onClick={handleResetToDefaults}
+              className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+              title="Restablecer datos base oficiales"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Sync Error Notice */}
+        {syncError && (
+          <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-black">Error en lectura de Google Sheets:</span>
+              <p className="mt-0.5 text-rose-800">{syncError}</p>
+              <p className="mt-1 text-[11px] text-rose-600">
+                Sugerencia: Verifique que la hoja esté publicada en la web (Archivo &gt; Compartir &gt; Publicar en la web &gt; CSV) o use el enlace demo preconfigurado.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* MODAL: CONFIGURAR GOOGLE SHEETS */}
+      {showSheetsConfigModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setShowSheetsConfigModal(false)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-emerald-100 text-emerald-700">
+                  <FileSpreadsheet className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-slate-900 text-sm">Vincular Hoja de Google Sheets</h3>
+                  <p className="text-xs text-slate-500">Módulo de Horómetros y Flota (Solo Lectura)</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowSheetsConfigModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-black text-slate-800 mb-1">
+                  URL de Publicación Web o Enlace de Google Sheets:
+                </label>
+                <input
+                  type="text"
+                  placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv"
+                  value={sheetsUrlInput}
+                  onChange={(e) => setSheetsUrlInput(e.target.value)}
+                  className="w-full text-xs p-2.5 rounded-xl border border-slate-300 font-mono focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  En Google Sheets: <b>Archivo &gt; Compartir &gt; Publicar en la web &gt; Formato CSV</b>.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-black text-slate-800 mb-1">
+                    Pestaña / Hoja:
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Flota_Horometros"
+                    value={sheetsTabInput}
+                    onChange={(e) => setSheetsTabInput(e.target.value)}
+                    className="w-full text-xs p-2.5 rounded-xl border border-slate-300 font-mono focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black text-slate-800 mb-1">
+                    Frecuencia de Auto-Sincronización:
+                  </label>
+                  <select
+                    value={autoRefreshSecs}
+                    onChange={(e) => setAutoRefreshSecs(Number(e.target.value))}
+                    className="w-full text-xs p-2.5 rounded-xl border border-slate-300 bg-white font-bold text-slate-800 focus:ring-2 focus:ring-emerald-500 focus:outline-none cursor-pointer"
+                  >
+                    <option value={30}>Cada 30 segundos</option>
+                    <option value={60}>Cada 60 segundos (Recomendado)</option>
+                    <option value={120}>Cada 2 minutos</option>
+                    <option value={300}>Cada 5 minutos</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="auto-sync-check"
+                  checked={autoRefreshActive}
+                  onChange={(e) => setAutoRefreshActive(e.target.checked)}
+                  className="w-4 h-4 text-emerald-600 rounded-sm cursor-pointer"
+                />
+                <label htmlFor="auto-sync-check" className="text-xs font-bold text-slate-700 cursor-pointer">
+                  Habilitar auto-refresco periódico de datos en segundo plano
+                </label>
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+              <button
+                onClick={() => {
+                  setSheetsUrlInput(DEFAULT_DEMO_FLEET_SHEET_URL);
+                  setSheetsTabInput('Flota_Horometros');
+                }}
+                className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer transition-colors"
+              >
+                Cargar Demo STOL
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowSheetsConfigModal(false)}
+                  className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleSaveSheetsConfigModal}
+                  className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black cursor-pointer shadow-xs transition-colors"
+                >
+                  Guardar y Sincronizar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* SUB-NAVIGATION TABS */}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-2.5 rounded-2xl border-2 border-slate-200 shadow-sm">

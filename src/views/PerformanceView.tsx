@@ -23,7 +23,8 @@ import { StolLogo } from '../components/StolLogo';
 import { SupervisorLowGradesDiagnostic } from '../components/SupervisorLowGradesDiagnostic';
 import { ExecutiveObservationsSection } from '../components/ExecutiveObservationsSection';
 import { getObservationsByModule } from '../data/executiveObservationsRegistry';
-import { DataFreshnessStatus, ManualDataImportPanel } from '../components/ManualDataImportPanel';
+import { DataFreshnessStatus } from '../components/ManualDataImportPanel';
+import { useRole } from '../context/RoleContext';
 
 import {
   Users,
@@ -40,6 +41,7 @@ import {
   Sparkles,
   ArrowRight,
   TrendingDown,
+  ShieldCheck,
 } from 'lucide-react';
 
 const loadPerformanceData = <T,>(key: string, fallback: T): T => {
@@ -58,8 +60,11 @@ interface PerformanceViewProps {
 }
 
 export const PerformanceView: React.FC<PerformanceViewProps> = ({ selectedMonth, onSelectMonth }) => {
+  const { role } = useRole();
+  const isDirector = role === 'DIRECTORIO';
   const [activeTab, setActiveTab] = useState<'consolidado' | 'mensual' | 'trimestral' | 'observaciones' | 'diagnostico_causal'>('consolidado');
-  const [isEditMode, setIsEditMode] = useState<boolean>(true);
+  const [isEditMode, setIsEditMode] = useState<boolean>(false);
+  const effectiveEditMode = isDirector ? false : isEditMode;
 
   // New Interactive Filters (extracted from HTML / requirements)
   const [filterBoss, setFilterBoss] = useState<'Todos' | 'Pedro Morante' | 'Aldo Bautista'>('Todos');
@@ -314,14 +319,6 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({ selectedMonth,
         </div>
       )}
 
-      <ManualDataImportPanel
-        source="performance"
-        title="Cargar respaldo de evaluación de Supervisores"
-        acceptedExtensions={['.json']}
-        instructions="Usa un respaldo JSON exportado desde Administrar Datos."
-        onImport={handleImportPerformanceFile}
-      />
-
       {/* 1. ENCABEZADO PRINCIPAL DE LA PESTAÑA */}
       <header className="bg-white border-2 border-slate-300 rounded-2xl p-5 shadow-sm space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
@@ -363,27 +360,37 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({ selectedMonth,
               <span>{lastUpdateTimestamp}</span>
             </span>
 
-            <button
-              onClick={() => setIsEditMode(!isEditMode)}
-              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer border ${
-                isEditMode
-                  ? 'bg-amber-500 text-slate-950 border-amber-600 shadow-sm shadow-amber-500/20'
-                  : 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200'
-              }`}
-              title="Activar para editar calificaciones, nombres, notas y observaciones directamente"
-            >
-              <Edit3 className="w-3.5 h-3.5" />
-              <span>Modo Edición: {isEditMode ? 'ACTIVADO' : 'DESACTIVADO'}</span>
-            </button>
+            {/* Editing Controls: Hidden for Directorio (Read-Only) */}
+            {isDirector ? (
+              <span className="bg-amber-50 text-amber-900 border border-amber-300 text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1.5 shadow-xs">
+                <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
+                <span>Directorio (Solo Lectura)</span>
+              </span>
+            ) : (
+              <>
+                <button
+                  onClick={() => setIsEditMode(!isEditMode)}
+                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer border ${
+                    isEditMode
+                      ? 'bg-amber-500 text-slate-950 border-amber-600 shadow-sm shadow-amber-500/20'
+                      : 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200'
+                  }`}
+                  title="Activar para editar calificaciones, nombres, notas y observaciones directamente"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  <span>Modo Edición: {isEditMode ? 'ACTIVADO' : 'DESACTIVADO'}</span>
+                </button>
 
-            <button
-              onClick={() => setIsDataModalOpen(true)}
-              className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-black transition-all border border-slate-300 cursor-pointer shadow-sm"
-              title="Configurar metas, exportar e importar datos"
-            >
-              <Settings className="w-3.5 h-3.5 text-slate-600" />
-              <span className="hidden sm:inline">Administrar Datos</span>
-            </button>
+                <button
+                  onClick={() => setIsDataModalOpen(true)}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-black transition-all border border-slate-300 cursor-pointer shadow-sm"
+                  title="Configurar metas, exportar e importar datos"
+                >
+                  <Settings className="w-3.5 h-3.5 text-slate-600" />
+                  <span className="hidden sm:inline">Administrar Datos</span>
+                </button>
+              </>
+            )}
 
             <button
               onClick={() => window.print()}
@@ -765,7 +772,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({ selectedMonth,
                     <th className="py-3 px-3 text-center bg-slate-800 text-white border-l border-slate-700">
                       Nota Final Exacta
                     </th>
-                    {isEditMode && <th className="py-3 px-3 text-center bg-slate-950 text-amber-400">Acción</th>}
+                    {effectiveEditMode && <th className="py-3 px-3 text-center bg-slate-950 text-amber-400">Acción</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-semibold text-slate-800">
@@ -850,7 +857,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({ selectedMonth,
                           {sup.calculatedFinal}%
                         </span>
                       </td>
-                      {isEditMode && (
+                      {effectiveEditMode && (
                         <td className="py-2.5 px-3 text-center">
                           <button
                             onClick={() => {
@@ -908,7 +915,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({ selectedMonth,
                         {monthlyAverages.final}%
                       </span>
                     </td>
-                    {isEditMode && <td className="py-3 px-3 bg-slate-950 text-slate-400">–</td>}
+                    {effectiveEditMode && <td className="py-3 px-3 bg-slate-950 text-slate-400">–</td>}
                   </tr>
                 </tfoot>
               </table>
@@ -949,7 +956,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({ selectedMonth,
                     <th className="py-2.5 px-3 text-center border-r border-slate-700">Sem 42</th>
                     <th className="py-2.5 px-3 text-center border-r border-slate-700">Sem 43</th>
                     <th className="py-2.5 px-3 text-center">Sem 44</th>
-                    {isEditMode && <th className="py-2.5 px-3 text-center bg-slate-950 text-amber-400">Acción</th>}
+                    {effectiveEditMode && <th className="py-2.5 px-3 text-center bg-slate-950 text-amber-400">Acción</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-semibold text-slate-800">
@@ -993,7 +1000,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({ selectedMonth,
                         <td className="py-2.5 px-3 text-center tabular-nums">
                           {w.weeks.sem44 !== null ? `${w.weeks.sem44}%` : '–'}
                         </td>
-                        {isEditMode && (
+                        {effectiveEditMode && (
                           <td className="py-2.5 px-3 text-center">
                             <button
                               onClick={() => {
@@ -1023,7 +1030,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({ selectedMonth,
                     <td className="py-2.5 px-3 text-center border-r border-slate-800">86.0%</td>
                     <td className="py-2.5 px-3 text-center border-r border-slate-800">84.7%</td>
                     <td className="py-2.5 px-3 text-center">85.5%</td>
-                    {isEditMode && <td className="py-2.5 px-3 bg-slate-950 text-slate-400">–</td>}
+                    {effectiveEditMode && <td className="py-2.5 px-3 bg-slate-950 text-slate-400">–</td>}
                   </tr>
                 </tfoot>
               </table>
@@ -1097,7 +1104,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({ selectedMonth,
             setEditingObservation(obs);
             setIsObservationModalOpen(true);
           }}
-          isEditMode={isEditMode}
+          isEditMode={effectiveEditMode}
         />
       )}
 
@@ -1116,7 +1123,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({ selectedMonth,
                 </p>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
-                {isEditMode && (
+                {effectiveEditMode && (
                   <button
                     onClick={() => {
                       setEditingObservation(null);
@@ -1210,7 +1217,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({ selectedMonth,
                         <span className="text-xs font-black text-rose-600 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
                           {obs.deductionPoints > 0 ? `-${obs.deductionPoints}` : obs.deductionPoints} pts
                         </span>
-                        {isEditMode && (
+                        {effectiveEditMode && (
                           <button
                             onClick={() => {
                               setEditingObservation(obs);

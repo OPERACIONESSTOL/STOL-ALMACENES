@@ -157,24 +157,15 @@ export const VolumetrySyncPanel: React.FC<VolumetrySyncPanelProps> = ({
               <span>Gestión del Maestro SKU & Sincronización en Línea</span>
             </div>
             <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
-              Alimentación Operativa & Visualización Directiva
+              Sincronización en Vivo mediante Google Sheets
             </h2>
             <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-              El equipo de operaciones sube o actualiza el archivo Excel del Maestro de SKUs desde una carpeta
-              pública de la empresa (SharePoint, OneDrive, Servidor de Red o carga directa). Los indicadores,
-              gráficas y auditorías se actualizan inmediatamente para la revisión del Directorio.
+              La plataforma consulta en modo solo lectura el maestro de SKUs y cubicaje desde tu hoja de Google Sheets
+              en línea. Los indicadores, gráficas y auditorías volumétricas se actualizan automáticamente para la revisión del Directorio.
             </p>
           </div>
 
           <div className="flex flex-col sm:flex-row gap-3">
-            <button
-              onClick={downloadOfficialSkuMasterTemplate}
-              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white text-xs font-bold transition-all cursor-pointer backdrop-blur-xs"
-            >
-              <Download className="w-4 h-4 text-cyan-400" />
-              <span>Descargar Plantilla Oficial Excel</span>
-            </button>
-
             <button
               onClick={handleSimulateDailyBatch}
               className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-black transition-all shadow-md cursor-pointer"
@@ -231,24 +222,24 @@ export const VolumetrySyncPanel: React.FC<VolumetrySyncPanelProps> = ({
               </div>
               <div>
                 <h3 className="text-sm font-black text-slate-900 uppercase">
-                  1. Sincronización en Línea (Carpeta Pública Empresarial)
+                  1. Conexión en Línea con Google Sheets
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Enlace directo a archivo de red, SharePoint, OneDrive o Google Drive compartido
+                  Enlace directo a hoja publicada en la web de Google Sheets (formato CSV/TSV)
                 </p>
               </div>
             </div>
 
             <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-bold">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              Enlace Activo
+              Google Sheets Activo
             </span>
           </div>
 
           <form onSubmit={handleSaveUrl} className="space-y-3">
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
-                URL o Vínculo Compartido del Archivo Maestro (Excel / CSV)
+                URL de Google Sheets (Publicar en la web o enlace compartido):
               </label>
               <div className="flex gap-2">
                 <div className="relative flex-1">
@@ -257,21 +248,21 @@ export const VolumetrySyncPanel: React.FC<VolumetrySyncPanelProps> = ({
                   </div>
                   <input
                     type="url"
-                    placeholder="ej. https://sharepoint.empresa.com/operaciones/Maestro_SKUs.xlsx"
+                    placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv"
                     value={localUrl}
                     onChange={(e) => setLocalUrl(e.target.value)}
-                    className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono text-slate-900 focus:outline-none focus:border-blue-600 focus:bg-white"
+                    className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono text-slate-900 focus:outline-none focus:border-emerald-600 focus:bg-white"
                   />
                 </div>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs transition-colors cursor-pointer shrink-0"
+                  className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs transition-colors cursor-pointer shrink-0"
                 >
-                  Guardar Vínculo
+                  Guardar Enlace Sheets
                 </button>
               </div>
               <p className="text-[11px] text-slate-400 mt-1">
-                Tip: En SharePoint u OneDrive utilice la opción <em>"Copiar vínculo público / directo"</em> o exportar como web para que se pueda descargar automáticamente.
+                En Google Sheets: <em>Archivo &gt; Compartir &gt; Publicar en la web &gt; Elegir hoja y seleccionar "Valores separados por comas (.csv)"</em>.
               </p>
             </div>
 

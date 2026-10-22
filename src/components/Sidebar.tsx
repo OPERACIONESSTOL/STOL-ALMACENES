@@ -16,6 +16,8 @@ import {
   Layers,
   Sparkles,
   Globe,
+  BarChart3,
+  ExternalLink,
 } from 'lucide-react';
 
 export type AppModule =
@@ -25,7 +27,8 @@ export type AppModule =
   | 'supervisors'
   | 'overtime'
   | 'fleet'
-  | 'telemetry';
+  | 'telemetry'
+  | 'powerbi';
 
 interface NavItem {
   id: AppModule;
@@ -50,6 +53,7 @@ interface SidebarProps {
   anomaliesCount: number;
   inoperativityHours: number;
   onSwitchToWebsite?: () => void;
+  onOpenDataSources?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -61,6 +65,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   anomaliesCount,
   inoperativityHours,
   onSwitchToWebsite,
+  onOpenDataSources,
 }) => {
   const navSections: NavSection[] = [
     {
@@ -123,6 +128,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
           icon: <Truck className="w-4 h-4 shrink-0" />,
           badge: `${inoperativityHours}h Inop`,
           badgeColor: 'bg-rose-950 text-rose-300 border border-rose-800',
+        },
+      ],
+    },
+    {
+      title: 'Inteligencia de Negocios & BI',
+      items: [
+        {
+          id: 'powerbi',
+          label: 'Power BI Corporativo',
+          sublabel: 'Informes Embebidos · MTBF & Volumen',
+          icon: <BarChart3 className="w-4 h-4 shrink-0 text-amber-400" />,
+          badge: 'Power BI',
+          badgeColor: 'bg-amber-950 text-amber-300 border border-amber-800',
         },
       ],
     },
@@ -231,9 +249,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           ))}
 
+          {/* Multi-Source Data Hub button */}
+          {onOpenDataSources && !isCollapsed && (
+            <div className="pt-2 px-2">
+              <button
+                onClick={onOpenDataSources}
+                className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-700/80 hover:border-slate-600 text-xs font-bold transition-all cursor-pointer shadow-xs"
+              >
+                <div className="flex items-center gap-2">
+                  <Database className="w-4 h-4 text-emerald-400" />
+                  <span>Fuentes de Datos</span>
+                </div>
+                <span className="text-[9.5px] uppercase font-black bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-400/30">
+                  4 Conectores
+                </span>
+              </button>
+            </div>
+          )}
+
           {/* Intranet Scalability Note for upcoming tabs */}
           {!isCollapsed && (
-            <div className="pt-3 border-t border-slate-800/70 px-2">
+            <div className="pt-2 border-t border-slate-800/70 px-2">
               <div className="bg-slate-900/60 rounded-xl p-2.5 border border-slate-800/60 text-[10.5px] text-slate-400">
                 <div className="flex items-center gap-1.5 text-blue-400 font-bold text-[10px] uppercase mb-1">
                   <Sparkles className="w-3 h-3 text-cyan-400" />
@@ -248,21 +284,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
 
-      {/* Bottom Public Website & Operational Status */}
+      {/* Bottom Operational Status */}
       <div className="p-3 border-t border-slate-800/90 bg-slate-950/80 space-y-2">
-        {onSwitchToWebsite && (
-          <button
-            onClick={onSwitchToWebsite}
-            className={`w-full flex items-center justify-center gap-2 py-2 px-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 hover:border-slate-700 text-xs font-bold transition-all cursor-pointer ${
-              isCollapsed ? 'p-2' : ''
-            }`}
-            title="Ir a la Página Web Pública de STOL"
-          >
-            <Globe className="w-4 h-4 text-cyan-400 shrink-0" />
-            {!isCollapsed && <span className="truncate">Ver Página Web Pública</span>}
-          </button>
-        )}
-
         {!isCollapsed ? (
           <div className="bg-slate-900/90 rounded-xl p-2.5 border border-slate-800/80 flex items-center justify-between text-[11px]">
             <div className="flex items-center gap-2">

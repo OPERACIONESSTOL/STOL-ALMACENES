@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Chart as ChartJS, registerables } from 'chart.js';
 import { OvertimeRecord, BonusRecord } from '../types/overtime';
+import { BarChart3, AlertCircle, RefreshCw, Calendar, FileSpreadsheet } from 'lucide-react';
 
 ChartJS.register(...registerables);
 
@@ -337,6 +338,28 @@ export const OvertimeCharts: React.FC<OvertimeChartsProps> = ({ records, bonusRe
       chartsInstancesRef.current = {};
     };
   }, [records, bonusRecords]);
+
+  if (records.length === 0) {
+    return (
+      <div className="bg-white rounded-2xl border-2 border-dashed border-slate-300 p-8 text-center space-y-4 shadow-xs">
+        <div className="w-16 h-16 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto shadow-inner">
+          <BarChart3 className="w-8 h-8" />
+        </div>
+        <div className="max-w-md mx-auto space-y-1.5">
+          <h3 className="text-base font-black text-slate-900 tracking-tight">
+            Esperando datos de Horas Extras para graficar
+          </h3>
+          <p className="text-xs text-slate-500 leading-relaxed">
+            No se encontraron registros de HHEE para el rango de fechas seleccionado o la hoja de cálculo de Google Sheets está en proceso de sincronización.
+          </p>
+        </div>
+        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-100 text-slate-700 text-xs font-semibold">
+          <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+          <span>Verifica el enlace en "Configurar Enlace Sheets" o amplía el rango de fechas</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

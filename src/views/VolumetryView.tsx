@@ -41,8 +41,9 @@ import { ExecutiveObservationsSection } from '../components/ExecutiveObservation
 import { getObservationsByModule } from '../data/executiveObservationsRegistry';
 import { VolumetryCharts } from '../components/VolumetryCharts';
 import { VolumetrySyncPanel } from '../components/VolumetrySyncPanel';
-import { DataFreshnessStatus, ManualDataImportPanel } from '../components/ManualDataImportPanel';
+import { DataFreshnessStatus } from '../components/ManualDataImportPanel';
 import { ReportModuleHeader, getReportMonthFromDate } from '../components/ReportModuleHeader';
+import { useRole } from '../context/RoleContext';
 import {
   parseSkuMasterFile,
   ParseSkuMasterResult,
@@ -50,6 +51,7 @@ import {
   exportMeasurementsToFullExcel,
   downloadOfficialSkuMasterTemplate,
 } from '../utils/skuMasterExcel';
+import { syncVolumetryFromGoogleSheets } from '../services/googleSheetsService';
 
 const LOCAL_STORAGE_KEY_MEASUREMENTS = 'stol_sku_measurements_v1';
 const LOCAL_STORAGE_KEY_URL = 'stol_sku_public_url_v1';
@@ -62,6 +64,8 @@ interface VolumetryViewProps {
 }
 
 export const VolumetryView: React.FC<VolumetryViewProps> = ({ selectedMonth, onSelectMonth }) => {
+  const { role } = useRole();
+  const isDirector = role === 'DIRECTORIO';
   // Load saved measurements from localStorage or fall back to initial
   const [measurements, setMeasurements] = useState<SkuMeasurement[]>(() => {
     try {
@@ -170,6 +174,24 @@ export const VolumetryView: React.FC<VolumetryViewProps> = ({ selectedMonth, onS
     setSyncBannerMessage(null);
 
     try {
+      if (onlineUrl && (onlineUrl.includes('docs.google.com/spreadsheets') || onlineUrl.includes('/pub') || onlineUrl.includes('/gviz/tq'))) {
+        const res = await syncVolumetryFromGoogleSheets(onlineUrl);
+        if (res.success && res.data && res.data.length > 0) {
+          setMeasurements(res.data);
+          const timeStr = `Hoy a las ${res.timestamp}`;
+          setLastSyncTime(timeStr);
+          try {
+            localStorage.setItem(LOCAL_STORAGE_KEY_LAST_SYNC, timeStr);
+          } catch (e) {}
+          setSyncBannerMessage(
+            `Sincronización confirmada: se actualizaron ${res.data.length} SKUs desde Google Sheets.`
+          );
+          return;
+        } else {
+          throw new Error(res.error || 'No se obtuvieron registros válidos de la hoja de Google Sheets.');
+        }
+      }
+
       const result = await fetchAndParseSkuMasterFromUrl(onlineUrl);
       if (!result.success || result.measurements.length === 0) {
         throw new Error(result.errorMessage || 'No se pudo leer un maestro SKU válido. Los datos no se actualizaron.');
@@ -478,33 +500,6 @@ export const VolumetryView: React.FC<VolumetryViewProps> = ({ selectedMonth, onS
         </div>
       </div>
 
-      <div className="space-y-2">
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className="font-bold text-slate-700">Al cargar el maestro:</span>
-          <button
-            type="button"
-            onClick={() => setLoadMode('replace')}
-            className={`px-3 py-1.5 rounded-lg border font-bold ${loadMode === 'replace' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-300'}`}
-          >
-            Reemplazar maestro
-          </button>
-          <button
-            type="button"
-            onClick={() => setLoadMode('merge')}
-            className={`px-3 py-1.5 rounded-lg border font-bold ${loadMode === 'merge' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-300'}`}
-          >
-            Combinar por SKU
-          </button>
-        </div>
-        <ManualDataImportPanel
-          source="volumetry"
-          title="Cargar maestro de SKU y mediciones"
-          acceptedExtensions={['.xlsx', '.xls', '.xlsm', '.csv']}
-          instructions="Se detectan las hojas MAESTRO y SKU; se validan dimensiones y discrepancias."
-          onImport={handleManualImport}
-        />
-      </div>
-
       {/* 2. TOP EXECUTIVE VOLUMETRY KPI STRIP (Always visible for quick oversight) */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* KPI 1: Volumen Total */}
@@ -649,13 +644,15 @@ export const VolumetryView: React.FC<VolumetryViewProps> = ({ selectedMonth, onS
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
-              <button
-                onClick={() => setShowAddModal(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition-colors cursor-pointer shadow-sm"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Registrar Nueva Medición</span>
-              </button>
+              {!isDirector && (
+                <button
+                  onClick={() => setShowAddModal(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition-colors cursor-pointer shadow-sm"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Registrar Nueva Medición</span>
+                </button>
+              )}
               <button
                 onClick={() => exportMeasurementsToFullExcel(monthMeasurements)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs border border-emerald-300 transition-colors cursor-pointer"
