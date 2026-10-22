@@ -29,6 +29,7 @@ import { isoToExcelSerial, excelSerialToIso } from '../utils/overtimeExcel';
 export interface GoogleSheetsConfig {
   sheetUrl: string;
   sheetTab?: string;
+  bonoTab?: string;
   autoRefreshIntervalSeconds?: number;
   lastSyncedAt?: string;
   autoRefreshEnabled?: boolean;
@@ -74,6 +75,7 @@ export function getSavedSheetsConfig(moduleKey: string = 'fleet'): GoogleSheetsC
   return {
     sheetUrl: '',
     sheetTab: defaultTabs[moduleKey] || 'Hoja 1',
+    bonoTab: moduleKey === 'overtime' ? 'BONO' : undefined,
     autoRefreshIntervalSeconds: 60,
     autoRefreshEnabled: false,
   };
@@ -720,33 +722,42 @@ export function mapRowsToBonusDataset(rows: string[][]): BonusRecord[] {
   const maxSearch = Math.min(rows.length, 6);
   for (let r = 0; r < maxSearch; r++) {
     const candidateHeaders = rows[r].map((h) => cleanStr(h));
-    // Find 'dias' column using include to be robust to full header string
-    const dIdx = candidateHeaders.findIndex((h) => h.includes('dias'));
+    const dIdx = candidateHeaders.findIndex(
+      (h) => h.includes('dias') || h.includes('dia') || h.includes('bono') || h.includes('incentivo') || h.includes('cant') || h === 'd'
+    );
     
     if (dIdx !== -1) {
       headerRowIndex = r;
       headers = candidateHeaders;
       diasIdx = dIdx;
       
-      // Map based on cleanStr matches using includes
-      areaIdx = candidateHeaders.findIndex((h) => h.includes('area'));
-      cargoIdx = candidateHeaders.findIndex((h) => h.includes('cargo'));
-      delIdx = candidateHeaders.findIndex((h) => h.includes('del'));
-      alIdx = candidateHeaders.findIndex((h) => h.includes('al'));
+      areaIdx = candidateHeaders.findIndex((h) => h.includes('area') || h.includes('sede') || h.includes('departamento') || h === 'a');
+      cargoIdx = candidateHeaders.findIndex((h) => h.includes('cargo') || h.includes('puesto') || h.includes('rol') || h.includes('operario') || h === 'c');
+      delIdx = candidateHeaders.findIndex((h) => h.includes('del') || h.includes('desde'));
+      alIdx = candidateHeaders.findIndex((h) => h.includes('al') || h.includes('hasta'));
       
       break;
     }
   }
 
-  // Fallback if not found by keyword
   if (diasIdx === -1) {
     headerRowIndex = 0;
     headers = rows[0].map((h) => cleanStr(h));
     areaIdx = headers.findIndex((h) => h.includes('area') || h === 'a');
     cargoIdx = headers.findIndex((h) => h.includes('cargo') || h === 'c');
-    diasIdx = headers.findIndex((h) => h.includes('dias') || h.includes('dia') || h.includes('bono') || h.includes('d'));
+    diasIdx = headers.findIndex((h) => h.includes('dias') || h.includes('dia') || h.includes('bono') || h.includes('incentivo') || h === 'd');
     delIdx = headers.findIndex((h) => h === 'del' || h.includes('del') || h.includes('desde'));
-    alIdx = headers.findIndex((h) => h === 'al' || h.includes('al') || h.includes('hasta'));
+    alIdx = headers.findIndex((h) => h === 'al' || h.includes('al' )|| h.includes('hasta'));
+  }
+
+  if (diasIdx === -1 && rows.length > 1) {
+    for (let c = 0; c < (rows[1]?.length || 0); c++) {
+      const val = parseFloat(String(rows[1][c] || '').replace(',', '.'));
+      if (!isNaN(val) && val > 0 && val < 50) {
+        diasIdx = c;
+        break;
+      }
+    }
   }
 
   if (diasIdx === -1) return [];
@@ -815,7 +826,8 @@ export function mapRowsToBonusDataset(rows: string[][]): BonusRecord[] {
 
 export async function syncOvertimeFromGoogleSheets(
   url: string,
-  sheetTab?: string
+  sheetTab?: string,
+  bonoTab?: string
 ): Promise<SyncResult<OvertimeDataset>> {
   const timestamp = new Date().toLocaleTimeString('es-PE', {
     hour: '2-digit',
@@ -828,26 +840,37 @@ export async function syncOvertimeFromGoogleSheets(
     const { rows } = await fetchGoogleSheetCSV(url, sheetTab || 'HHEE');
     const { dataset, columnsDetected } = mapRowsToOvertimeDataset(rows);
 
-    // 2. Try fetching separate BONO tab from the same spreadsheet workbook
-    let bonoRecords: BonusRecord[] = dataset.bo;
-    try {
-      const bonoResult = await fetchGoogleSheetCSV(url, 'BONO');
-      if (bonoResult.rows && bonoResult.rows.length > 1) {
-        const parsedBonus = mapRowsToBonusDataset(bonoResult.rows);
-        if (parsedBonus.length > 0) {
-          bonoRecords = parsedBonus;
-        }
-      }
-    } catch {
+    // 2. Try fetching separate BONO tab using robust fallback list of tab names
+    const possibleBonoTabs = [
+      bonoTab,
+      'BONO',
+      'Bono',
+      'bono',
+      'BONOS',
+      'Bonos',
+      'bonos',
+      'Incentivos',
+      'Incentivo',
+      'Bono_Dias',
+      'Dias_Bono'
+    ].filter(Boolean) as string[];
+
+    let bonoRecords: BonusRecord[] = [];
+    for (const bTab of possibleBonoTabs) {
       try {
-        const bonosResult = await fetchGoogleSheetCSV(url, 'Bonos');
-        if (bonosResult.rows && bonosResult.rows.length > 1) {
-          const parsedBonus = mapRowsToBonusDataset(bonosResult.rows);
+        const bonoResult = await fetchGoogleSheetCSV(url, bTab);
+        if (bonoResult.rows && bonoResult.rows.length > 1) {
+          const parsedBonus = mapRowsToBonusDataset(bonoResult.rows);
           if (parsedBonus.length > 0) {
             bonoRecords = parsedBonus;
+            break;
           }
         }
       } catch {}
+    }
+
+    if (bonoRecords.length === 0 && dataset.bo.length > 0) {
+      bonoRecords = dataset.bo;
     }
 
     if (bonoRecords.length === 0) {

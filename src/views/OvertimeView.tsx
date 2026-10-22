@@ -11,6 +11,7 @@ import {
 } from '../utils/overtimeExcel';
 import { OvertimeCharts } from '../components/OvertimeCharts';
 import { OvertimeMatrix } from '../components/OvertimeMatrix';
+import { AuditBonoModal } from '../components/AuditBonoModal';
 import { ExecutiveObservationsSection } from '../components/ExecutiveObservationsSection';
 import { getObservationsByModule } from '../data/executiveObservationsRegistry';
 import { REPORT_MONTHS, ReportModuleHeader, getReportMonthFromDate } from '../components/ReportModuleHeader';
@@ -39,6 +40,7 @@ import {
   X,
   ShieldCheck,
   AlertTriangle,
+  Info,
 } from 'lucide-react';
 import {
   getSavedSheetsConfig,
@@ -372,14 +374,17 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
   });
   const [syncError, setSyncError] = useState<string | null>(null);
   const [showSheetsConfigModal, setShowSheetsConfigModal] = useState<boolean>(false);
+  const [showAuditModal, setShowAuditModal] = useState<boolean>(false);
   const [sheetsUrlInput, setSheetsUrlInput] = useState<string>(sheetsConfig.sheetUrl);
   const [sheetsTabInput, setSheetsTabInput] = useState<string>(sheetsConfig.sheetTab || 'HHEE');
+  const [bonoTabInput, setBonoTabInput] = useState<string>(sheetsConfig.bonoTab || 'BONO');
   const [autoRefreshSecs, setAutoRefreshSecs] = useState<number>(sheetsConfig.autoRefreshIntervalSeconds || 60);
   const [autoRefreshActive, setAutoRefreshActive] = useState<boolean>(sheetsConfig.autoRefreshEnabled || false);
 
-  const handleSyncGoogleSheets = async (urlToUse?: string, tabToUse?: string, isSilent: boolean = false) => {
+  const handleSyncGoogleSheets = async (urlToUse?: string, tabToUse?: string, bonoTabToUse?: string, isSilent: boolean = false) => {
     const targetUrl = urlToUse !== undefined ? urlToUse : sheetsConfig.sheetUrl;
     const targetTab = tabToUse !== undefined ? tabToUse : (sheetsConfig.sheetTab || 'HHEE');
+    const targetBonoTab = bonoTabToUse !== undefined ? bonoTabToUse : (sheetsConfig.bonoTab || 'BONO');
 
     if (!targetUrl || !targetUrl.trim()) {
       if (!isSilent) setShowSheetsConfigModal(true);
@@ -390,11 +395,11 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
     setSyncError(null);
 
     try {
-      const res = await syncOvertimeFromGoogleSheets(targetUrl, targetTab);
+      const res = await syncOvertimeFromGoogleSheets(targetUrl, targetTab, targetBonoTab);
       if (res.success && res.data && res.data.hh && res.data.hh.length > 0) {
         setDataset(res.data);
         recordGoogleSheetsSyncFreshness('overtime', targetTab || 'HHEE');
-        const src = `Google Sheets (${targetTab || 'HHEE'})`;
+        const src = `Google Sheets (${targetTab || 'HHEE'} + ${targetBonoTab})`;
         setSourceName(src);
         setLastSyncTime(res.timestamp);
         setLastOperationFeed(res.timestamp);
@@ -417,7 +422,7 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
         setCurrentPage(1);
         if (!isSilent) {
           showToast(
-            `Sincronización exitosa: ${res.data.hh.length.toLocaleString('es-PE')} filas HHEE y ${res.data.bo.length.toLocaleString('es-PE')} registros de bonos actualizados.`,
+            `Sincronización exitosa: ${res.data.hh.length.toLocaleString('es-PE')} filas HHEE y ${res.data.bo.length.toLocaleString('es-PE')} registros leídos de la pestaña BONO.`,
             'success'
           );
         }
@@ -440,15 +445,16 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
     if (!autoRefreshActive || !sheetsConfig.sheetUrl) return;
     const intervalMs = (autoRefreshSecs || 60) * 1000;
     const timer = setInterval(() => {
-      handleSyncGoogleSheets(sheetsConfig.sheetUrl, sheetsConfig.sheetTab, true);
+      handleSyncGoogleSheets(sheetsConfig.sheetUrl, sheetsConfig.sheetTab, sheetsConfig.bonoTab, true);
     }, intervalMs);
     return () => clearInterval(timer);
-  }, [autoRefreshActive, sheetsConfig.sheetUrl, sheetsConfig.sheetTab, autoRefreshSecs]);
+  }, [autoRefreshActive, sheetsConfig.sheetUrl, sheetsConfig.sheetTab, sheetsConfig.bonoTab, autoRefreshSecs]);
 
   const handleSaveSheetsConfigModal = () => {
     const updated: GoogleSheetsConfig = {
       sheetUrl: sheetsUrlInput.trim(),
       sheetTab: sheetsTabInput.trim() || 'HHEE',
+      bonoTab: bonoTabInput.trim() || 'BONO',
       autoRefreshIntervalSeconds: autoRefreshSecs,
       autoRefreshEnabled: autoRefreshActive,
     };
@@ -456,7 +462,7 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
     saveSheetsConfig(updated, 'overtime');
     setShowSheetsConfigModal(false);
     if (updated.sheetUrl) {
-      handleSyncGoogleSheets(updated.sheetUrl, updated.sheetTab);
+      handleSyncGoogleSheets(updated.sheetUrl, updated.sheetTab, updated.bonoTab);
     }
   };
 
@@ -1009,7 +1015,13 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
         <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs relative overflow-hidden group hover:border-indigo-400 transition-all col-span-2 sm:col-span-1">
           <div className="flex items-center justify-between text-slate-500 mb-1">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Días de Bono</span>
-            <Sparkles className="w-4 h-4 text-indigo-600" />
+            <button
+              onClick={() => setShowAuditModal(true)}
+              className="text-indigo-600 hover:text-indigo-800 cursor-pointer"
+              title="Auditar cálculo de bonos"
+            >
+              <Info className="w-4 h-4" />
+            </button>
           </div>
           <div className="text-2xl sm:text-3xl font-black text-indigo-700 tabular-nums">
             {totalBonoDays.toLocaleString('es-PE')} <span className="text-sm font-semibold text-slate-500">días</span>
@@ -1284,6 +1296,14 @@ export const OvertimeView: React.FC<OvertimeViewProps> = ({ selectedMonth, onSel
           })}
         </div>
       )}
+
+      {/* MODAL: AUDITORÍA DE BONOS */}
+      <AuditBonoModal
+        isOpen={showAuditModal}
+        onClose={() => setShowAuditModal(false)}
+        dataset={dataset}
+        filteredBono={filteredBono}
+      />
 
       {/* MODAL: CONFIGURAR GOOGLE SHEETS PARA HHEE */}
       {showSheetsConfigModal && (
